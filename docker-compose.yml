@@ -1,0 +1,12 @@
+services:
+  hindi-shorts:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./final_shorts:/app/final_shorts
+      - ./logs:/app/logs
+      - ./storage:/app/storage
+      - ./assets:/app/assets
+    command: python main.py --schedule
+    restart: unless-stopped

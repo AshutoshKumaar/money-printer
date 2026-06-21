@@ -1,0 +1,20 @@
+services:
+  - type: worker
+    name: hindi-shorts-automation
+    env: docker
+    plan: starter
+    dockerCommand: python main.py --schedule
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRETS_FILE
+        value: storage/credentials/client_secret.json
+      - key: YOUTUBE_TOKEN_FILE
+        value: storage/credentials/youtube_token.json
+      - key: YOUTUBE_PRIVACY_STATUS
+        value: private
+      - key: SCHEDULE_TIME
+        value: "18:00"
+      - key: TIMEZONE
+        value: Asia/Kolkata

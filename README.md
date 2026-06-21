@@ -211,6 +211,8 @@ For Railway automation:
 
 Railway cron schedules use UTC, so 6:00 PM IST is 12:30 PM UTC. The Railway start command is intentionally `python main.py`, so each cron run generates one video, uploads it, sends notifications, and exits. Do not use `python main.py --schedule` for Railway cron, because Railway cron services should finish and exit after their task.
 
+Railway uses lower render defaults by design: 720x1280, 20 FPS, `ultrafast`, and one ffmpeg thread. This keeps memory usage stable on small Railway containers. For local high-quality renders, set `VIDEO_WIDTH=1080`, `VIDEO_HEIGHT=1920`, `RENDER_FPS=24`, and `FFMPEG_PRESET=veryfast`.
+
 For cloud upload, generate `youtube_token.json` locally first and provide it through a secure secret or persistent volume. The scheduler/cron run can then generate, authenticate, refresh tokens, upload, log, and notify without manual intervention.
 
 ## Notes

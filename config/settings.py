@@ -157,6 +157,20 @@ def _float_env(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number, got {value!r}") from exc
 
 
+def _is_cloud_runtime() -> bool:
+    return any(
+        os.getenv(marker)
+        for marker in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_PROJECT_ID",
+            "RENDER",
+            "RENDER_SERVICE_ID",
+            "K_SERVICE",
+            "DYNO",
+        )
+    )
+
+
 def load_settings(env_file: str | Path | None = None) -> Settings:
     """Load .env and construct a validated settings object."""
     base_dir = Path(__file__).resolve().parent.parent
@@ -169,6 +183,11 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     credentials_dir = _path_env("CREDENTIALS_DIR", base_dir, "storage/credentials")
     client_secrets_file = _path_env("YOUTUBE_CLIENT_SECRETS_FILE", base_dir, "storage/credentials/client_secret.json")
     token_file = _path_env("YOUTUBE_TOKEN_FILE", base_dir, "storage/credentials/youtube_token.json")
+    cloud_runtime = _is_cloud_runtime()
+    default_width = 720 if cloud_runtime else 1080
+    default_height = 1280 if cloud_runtime else 1920
+    default_fps = 20 if cloud_runtime else 24
+    default_preset = "ultrafast" if cloud_runtime else "veryfast"
 
     settings = Settings(
         base_dir=base_dir,
@@ -197,8 +216,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         voice_rate=os.getenv("VOICE_RATE", "+12%"),
         auto_fit_voice_duration=_bool_env("AUTO_FIT_VOICE_DURATION", True),
         video_resolution=(
-            _int_env("VIDEO_WIDTH", 1080),
-            _int_env("VIDEO_HEIGHT", 1920),
+            _int_env("VIDEO_WIDTH", default_width),
+            _int_env("VIDEO_HEIGHT", default_height),
         ),
         shorts_target_seconds=_int_env("SHORTS_TARGET_SECONDS", 58),
         shorts_max_seconds=_int_env("SHORTS_MAX_SECONDS", 60),
@@ -207,8 +226,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         narration_max_words=_int_env("NARRATION_MAX_WORDS", 132),
         segment_max_words=_int_env("SEGMENT_MAX_WORDS", 12),
         caption_words_per_chunk=_int_env("CAPTION_WORDS_PER_CHUNK", 3),
-        render_fps=_int_env("RENDER_FPS", 24),
-        ffmpeg_preset=os.getenv("FFMPEG_PRESET", "veryfast"),
+        render_fps=_int_env("RENDER_FPS", default_fps),
+        ffmpeg_preset=os.getenv("FFMPEG_PRESET", default_preset),
         background_music_volume=_float_env("BACKGROUND_MUSIC_VOLUME", 0.065),
         voice_volume=_float_env("VOICE_VOLUME", 1.0),
         request_timeout_seconds=_int_env("REQUEST_TIMEOUT_SECONDS", 30),

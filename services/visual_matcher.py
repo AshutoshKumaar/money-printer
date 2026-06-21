@@ -30,61 +30,73 @@ class VisualMatcher:
     """Maps scene narration to a relevant visual category, search query, and prompt."""
 
     CATEGORY_RULES: dict[str, dict[str, list[str] | str]] = {
+        "everyday_science": {
+            "keywords": [
+                "empty room", "room", "wall", "walls", "echo", "sound", "noise", "loud",
+                "quiet", "pen", "cap", "hole", "airway", "oxygen", "breathing", "safety",
+                "object", "physics", "experiment", "reflection", "absorption", "furniture",
+                "kamra", "khali", "awaaz", "shor", "dhwani", "ched", "suraksha",
+            ],
+            "query": "everyday science object close up physics experiment room",
+            "prompt": "realistic everyday science visual, close-up object, simple physics experiment, clean room",
+        },
         "space": {
             "keywords": [
-                "space", "cosmic", "galaxy", "planet", "star", "stars", "black hole", "astronaut",
-                "rocket", "telescope", "universe", "nebula", "milky way", "mars", "moon", "signal",
-                "antariksh", "brahmand", "taare", "एलियन", "अंतरिक्ष", "ब्रह्मांड", "गैलेक्सी",
+                "outer space", "deep space", "cosmic", "galaxy", "planet", "stars",
+                "black hole", "astronaut", "rocket", "telescope", "universe", "nebula",
+                "milky way", "mars", "moon", "alien", "antariksh", "brahmand", "taare",
             ],
             "query": "deep space galaxy telescope cosmic mystery",
             "prompt": "deep space anomaly, galaxies, telescope, cosmic dust, mysterious object",
         },
         "ocean": {
             "keywords": [
-                "ocean", "sea", "underwater", "deep sea", "wave", "waves", "marine", "creature",
-                "submarine", "submersible", "trench", "mariana", "water", "ship", "shark", "whale",
-                "samundar", "sagar", "paani", "समुद्र", "सागर", "पानी", "लहर", "गहराई",
+                "ocean", "sea", "underwater", "deep sea", "marine", "creature", "submarine",
+                "submersible", "trench", "mariana", "ship", "shark", "whale", "samundar",
+                "sagar", "paani",
             ],
-            "query": "deep ocean underwater creature trench waves",
+            "query": "deep ocean underwater creature trench",
             "prompt": "deep ocean trench, underwater darkness, sea creature silhouette, blue light rays",
         },
         "history": {
             "keywords": [
-                "history", "ancient", "ruins", "empire", "king", "queen", "war", "artifact", "monument",
-                "temple", "map", "civilization", "old", "historical", "इतिहास", "प्राचीन", "राजा",
-                "मंदिर", "युद्ध", "सभ्यता", "किला",
+                "history", "ancient", "ruins", "empire", "king", "queen", "war", "artifact",
+                "monument", "temple", "old map", "civilization", "historical", "itihas",
+                "pracheen", "raja", "mandir", "yudh", "sabhyata", "kila",
             ],
             "query": "ancient ruins historical monument artifact map",
             "prompt": "ancient ruins, historical artifact, old map, dramatic museum lighting",
         },
         "person": {
             "keywords": [
-                "scientist", "actor", "leader", "president", "inventor", "person", "man", "woman",
-                "face", "portrait", "वैज्ञानिक", "व्यक्ति", "आदमी", "महिला", "चेहरा",
+                "scientist", "actor", "leader", "president", "inventor", "person", "man",
+                "woman", "face", "portrait", "doctor", "teacher", "expert", "vaigyanik",
+                "vyakti", "aadmi", "mahila", "chehra",
             ],
-            "query": "person portrait documentary cinematic",
+            "query": "person documentary cinematic silhouette science explainer",
             "prompt": "documentary-style person representation, silhouette, studio lighting, no fake celebrity face",
         },
         "technology": {
             "keywords": [
-                "ai", "robot", "computer", "machine", "technology", "data", "internet", "signal",
-                "server", "chip", "hacker", "artificial intelligence", "टेक्नोलॉजी", "कंप्यूटर", "रोबोट",
+                "ai", "robot", "computer", "machine", "technology", "data", "internet",
+                "server", "chip", "hacker", "artificial intelligence", "circuit", "software",
+                "phone", "app", "device", "tech",
             ],
-            "query": "artificial intelligence robot computer data center",
-            "prompt": "AI computer interface, glowing circuits, robot silhouette, futuristic data visualization",
+            "query": "technology device circuit computer data center",
+            "prompt": "technology device close-up, glowing circuits, computer hardware, futuristic data visualization",
         },
         "nature": {
             "keywords": [
-                "forest", "animal", "earth", "mountain", "volcano", "desert", "storm", "cloud",
-                "jungle", "wildlife", "प्रकृति", "जंगल", "पहाड़", "तूफान", "धरती",
+                "forest", "animal", "earth", "mountain", "volcano", "desert", "storm",
+                "cloud", "jungle", "wildlife", "prakriti", "pahad", "toofan", "dharti",
             ],
             "query": "dramatic nature landscape storm mountain forest",
             "prompt": "dramatic natural landscape, storm clouds, cinematic light, high contrast",
         },
         "horror": {
             "keywords": [
-                "creepy", "scary", "mystery", "mysterious", "dark", "haunted", "ghost", "fear",
-                "डर", "डरावना", "रहस्य", "अंधेरा", "भूत",
+                "creepy", "scary", "mystery", "mysterious", "dark", "haunted", "ghost",
+                "fear", "dar", "darawna", "rahasya", "andhera",
             ],
             "query": "dark mysterious cinematic atmosphere",
             "prompt": "dark mysterious atmosphere, fog, dramatic shadows, suspenseful cinematic scene",
@@ -94,27 +106,28 @@ class VisualMatcher:
     STOPWORDS = {
         "the", "and", "for", "with", "this", "that", "from", "into", "about", "your", "you",
         "hai", "hain", "mein", "aur", "kya", "yeh", "ek", "ko", "ka", "ki", "ke", "se",
+        "vertical", "cinematic", "realistic", "dramatic", "lighting", "close", "close-up",
     }
 
     def plan(self, segment: Segment, topic: str) -> VisualPlan:
-        text = " ".join(
+        context_text = " ".join(
             [
-                segment.search_query,
-                segment.image_prompt,
                 segment.text,
                 segment.subtitle,
+                segment.search_query,
+                segment.image_prompt,
                 topic,
             ]
         ).lower()
-        category_scores = self._score_categories(text)
+        category_scores = self._score_categories(context_text)
         category, score = max(category_scores.items(), key=lambda item: item[1])
         if score == 0:
             category = self._topic_category(topic)
             score = 1
 
-        keywords = self._extract_keywords(text)
+        keywords = self._extract_keywords(context_text)
         rule = self.CATEGORY_RULES[category]
-        query_terms = self._query_terms(category, keywords, str(rule["query"]))
+        query_terms = self._query_terms(keywords, str(rule["query"]))
         prompt = self._prompt(segment, topic, category, keywords, str(rule["prompt"]))
         confidence = self._confidence(category, score, keywords, segment)
         reason = f"matched {category} with score {score} from narration/prompt keywords"
@@ -126,15 +139,19 @@ class VisualMatcher:
             score = 0
             for keyword in rule["keywords"]:  # type: ignore[index]
                 keyword_text = str(keyword).lower()
-                if keyword_text in text:
-                    score += 3 if " " in keyword_text else 1
+                if " " in keyword_text:
+                    if keyword_text in text:
+                        score += 4
+                    continue
+                if re.search(rf"\b{re.escape(keyword_text)}\b", text):
+                    score += 1
             scores[category] = score
         return scores
 
     def _topic_category(self, topic: str) -> str:
         scores = self._score_categories(topic.lower())
         category, score = max(scores.items(), key=lambda item: item[1])
-        return category if score else "horror"
+        return category if score else "everyday_science"
 
     def _extract_keywords(self, text: str) -> list[str]:
         words = re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}|[\u0900-\u097F]{2,}", text)
@@ -149,7 +166,7 @@ class VisualMatcher:
                 break
         return clean
 
-    def _query_terms(self, category: str, keywords: list[str], default_query: str) -> str:
+    def _query_terms(self, keywords: list[str], default_query: str) -> str:
         english_keywords = [item for item in keywords if re.fullmatch(r"[a-zA-Z0-9-]+", item)]
         selected = english_keywords[:5]
         return " ".join(selected + default_query.split()[:5]).strip() or default_query
@@ -164,7 +181,7 @@ class VisualMatcher:
 
     def _confidence(self, category: str, score: int, keywords: list[str], segment: Segment) -> float:
         prompt_text = f"{segment.image_prompt} {segment.search_query}".lower()
-        category_bonus = 0.18 if category in prompt_text else 0.0
-        score_bonus = min(0.28, score * 0.035)
+        category_bonus = 0.18 if category.replace("_", " ") in prompt_text else 0.0
+        score_bonus = min(0.28, score * 0.04)
         keyword_bonus = min(0.16, len(keywords) * 0.015)
         return round(min(0.95, 0.48 + category_bonus + score_bonus + keyword_bonus), 2)

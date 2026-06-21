@@ -90,7 +90,7 @@ class VideoService:
             preset=self.settings.ffmpeg_preset,
             temp_audiofile=str(self.settings.storage_dir / "temp-audio.m4a"),
             remove_temp=True,
-            threads=4,
+            threads=1,
         )
         final_video.close()
         for clip in scene_clips:

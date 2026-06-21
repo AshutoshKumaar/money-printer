@@ -277,7 +277,8 @@ class ImageService:
         seed = random.randint(1, 999999)
         url = (
             f"{self.settings.pollinations_base_url}/{encoded_prompt}"
-            f"?width=1080&height=1920&nologo=true&seed={seed}"
+            f"?width={self.settings.video_resolution[0]}&height={self.settings.video_resolution[1]}"
+            f"&nologo=true&seed={seed}"
         )
         response = requests.get(
             url,
@@ -291,6 +292,7 @@ class ImageService:
     def _local_fallback_image(self, segment: Segment, plan: VisualPlan, output_path: Path) -> Path:
         width, height = self.settings.video_resolution
         palettes = {
+            "everyday_science": ((14, 16, 18), (48, 52, 56), (255, 210, 72)),
             "space": ((3, 6, 20), (32, 25, 80), (92, 180, 255)),
             "ocean": ((1, 12, 28), (0, 54, 82), (70, 220, 240)),
             "history": ((25, 15, 8), (96, 60, 24), (235, 184, 92)),
@@ -299,7 +301,7 @@ class ImageService:
             "nature": ((5, 20, 12), (28, 74, 32), (130, 220, 90)),
             "horror": ((10, 4, 8), (50, 10, 24), (230, 40, 72)),
         }
-        top, bottom, accent = palettes.get(plan.category, palettes["horror"])
+        top, bottom, accent = palettes.get(plan.category, palettes["everyday_science"])
         image = Image.new("RGB", (width, height), top)
         draw = ImageDraw.Draw(image, "RGBA")
 
@@ -335,7 +337,27 @@ class ImageService:
         height: int,
         accent: tuple[int, int, int],
     ) -> None:
-        if category == "space":
+        if category == "everyday_science":
+            table_y = int(height * 0.70)
+            draw.rectangle([80, table_y, width - 80, table_y + 70], fill=(220, 220, 210, 120))
+            draw.rounded_rectangle(
+                [int(width * 0.24), int(height * 0.42), int(width * 0.76), int(height * 0.56)],
+                radius=22,
+                fill=(245, 245, 235, 210),
+                outline=(*accent, 230),
+                width=8,
+            )
+            for x in range(int(width * 0.30), int(width * 0.74), max(20, width // 24)):
+                draw.line([(x, int(height * 0.44)), (x + 30, int(height * 0.54))], fill=(30, 35, 40, 170), width=5)
+            center_x = width // 2
+            center_y = int(height * 0.38)
+            for radius in range(max(60, width // 10), max(220, width // 3), max(28, width // 28)):
+                draw.ellipse(
+                    [center_x - radius, center_y - radius, center_x + radius, center_y + radius],
+                    outline=(*accent, 70),
+                    width=5,
+                )
+        elif category == "space":
             draw.ellipse([170, 280, 900, 1010], fill=(*accent, 80), outline=(230, 240, 255, 170), width=8)
             draw.ellipse([305, 420, 765, 880], fill=(8, 12, 28, 255))
             draw.arc([120, 480, 960, 960], 195, 345, fill=(255, 220, 150, 180), width=22)

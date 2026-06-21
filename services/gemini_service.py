@@ -20,8 +20,15 @@ class GeminiService:
         self.settings = settings
         self.logger = logger
         self.client = genai.Client(api_key=settings.gemini_api_key)
+        self._quota_exhausted = False
 
     def generate_topic(self, recent_topics: list[str] | None = None) -> str:
+        recent_topics = recent_topics or []
+        if self._quota_exhausted:
+            topic = self._fallback_topic(recent_topics)
+            self.logger.warning("Gemini quota exhausted; using fallback topic: %s", topic)
+            return topic
+
         recent_block = ""
         if recent_topics:
             recent_block = (
@@ -34,22 +41,33 @@ class GeminiService:
         Make it clearly different from recently used topics.
         Return only the topic text, no bullets.
         """ + recent_block
-        response = retry_call(
-            lambda: self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-            ),
-            attempts=self.settings.retry_attempts,
-            backoff_seconds=self.settings.retry_backoff_seconds,
-            logger=self.logger,
-            label="Gemini topic generation",
-        )
-        topic = (response.text or "").strip().strip('"')
-        if topic and self._normalize_topic(topic) not in {self._normalize_topic(item) for item in recent_topics or []}:
-            return topic
-        return self._fallback_topic(recent_topics or [])
+        try:
+            response = retry_call(
+                lambda: self.client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                ),
+                attempts=self.settings.retry_attempts,
+                backoff_seconds=self.settings.retry_backoff_seconds,
+                logger=self.logger,
+                label="Gemini topic generation",
+            )
+            topic = (response.text or "").strip().strip('"')
+            if topic and self._normalize_topic(topic) not in {self._normalize_topic(item) for item in recent_topics}:
+                return topic
+        except Exception as exc:
+            if self._is_quota_error(exc):
+                self._quota_exhausted = True
+                self.logger.warning("Gemini quota exhausted during topic generation; using local fallback topic")
+            else:
+                self.logger.warning("Gemini topic generation failed; using local fallback topic: %s", exc)
+        return self._fallback_topic(recent_topics)
 
     def generate_script(self, topic: str) -> Script:
+        if self._quota_exhausted:
+            self.logger.warning("Gemini quota exhausted; using full fallback script")
+            return self._fallback_script(topic)
+
         prompt = self._script_prompt(topic)
         try:
             response = retry_call(
@@ -68,10 +86,16 @@ class GeminiService:
             script = self._normalize_script(script, topic)
             return self._fit_narration_budget(script)
         except Exception as exc:
+            if self._is_quota_error(exc):
+                self._quota_exhausted = True
             self.logger.error("Gemini script generation failed, using full fallback script: %s", exc)
             return self._fallback_script(topic)
 
     def improve_metadata(self, script: Script) -> Script:
+        if self._quota_exhausted:
+            self.logger.warning("Gemini quota exhausted; keeping fallback metadata")
+            return script
+
         prompt = f"""
         Improve YouTube publishing metadata for this Hindi Shorts topic: {script.topic}
         Return JSON only with title, description, tags, hashtags.
@@ -101,6 +125,8 @@ class GeminiService:
                 if str(tag).strip()
             ]
         except Exception as exc:
+            if self._is_quota_error(exc):
+                self._quota_exhausted = True
             self.logger.warning("Metadata improvement failed; keeping script metadata: %s", exc)
         return script
 
@@ -162,6 +188,8 @@ class GeminiService:
             if len(compressed.segments) == len(script.segments):
                 script = compressed
         except Exception as exc:
+            if self._is_quota_error(exc):
+                self._quota_exhausted = True
             self.logger.warning("Narration compression failed; applying deterministic word limits: %s", exc)
 
         return self._hard_limit_narration(script)
@@ -213,6 +241,11 @@ class GeminiService:
     @staticmethod
     def _normalize_topic(topic: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", topic.lower()).strip()
+
+    @staticmethod
+    def _is_quota_error(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return "429" in text or "resource_exhausted" in text or "quota" in text
 
     def _script_prompt(self, topic: str) -> str:
         return f"""

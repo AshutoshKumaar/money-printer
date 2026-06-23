@@ -29,8 +29,48 @@ from services.caption_service import CaptionService
 from storage import RunPaths
 
 
+def _get_container_memory() -> tuple[int, int | None, float]:
+    # 1. Try Cgroup v2
+    try:
+        curr_path = Path("/sys/fs/cgroup/memory.current")
+        max_path = Path("/sys/fs/cgroup/memory.max")
+        if curr_path.exists():
+            used = int(curr_path.read_text().strip())
+            max_val = max_path.read_text().strip()
+            limit = int(max_val) if max_val.isdigit() else None
+            percent = (used / limit) * 100.0 if limit else 0.0
+            return used, limit, percent
+    except Exception:
+        pass
+
+    # 2. Try Cgroup v1
+    try:
+        usage_path = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+        limit_path = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        if usage_path.exists():
+            used = int(usage_path.read_text().strip())
+            limit = int(limit_path.read_text().strip())
+            if limit and limit < 9223372036854771712:
+                percent = (used / limit) * 100.0
+                return used, limit, percent
+            else:
+                return used, None, 0.0
+    except Exception:
+        pass
+
+    # 3. Fallback to host/process memory (local development)
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        return mem.used, mem.total, mem.percent
+    except Exception:
+        pass
+
+    return 0, None, 0.0
+
+
 class MemoryMonitor(threading.Thread):
-    def __init__(self, logger: logging.Logger, interval: int = 30):
+    def __init__(self, logger: logging.Logger, interval: int = 15):
         super().__init__()
         self.logger = logger
         self.interval = interval
@@ -40,10 +80,14 @@ class MemoryMonitor(threading.Thread):
     def run(self):
         while not self.stop_event.is_set():
             try:
-                mem = psutil.virtual_memory()
+                used, limit, percent = _get_container_memory()
+                used_mb = used / (1024 * 1024)
+                limit_str = f"{limit / (1024 * 1024):.2f} MB" if limit else "Unlimited"
+                percent_str = f"{percent:.1f}%" if limit else "N/A"
+                
                 self.logger.info(
-                    "[Memory Monitor] System Memory: %.1f%% | Available: %.2f MB | Used: %.2f MB",
-                    mem.percent, mem.available / (1024*1024), mem.used / (1024*1024)
+                    "[Memory Monitor] Container Memory Used: %.2f MB | Limit: %s | Percent: %s",
+                    used_mb, limit_str, percent_str
                 )
             except Exception as e:
                 self.logger.warning("[Memory Monitor] Failed to log memory: %s", e)
@@ -67,15 +111,20 @@ class VideoService:
 
     def _check_memory_and_optimize(self, step_label: str) -> bool:
         try:
-            mem = psutil.virtual_memory()
+            used, limit, percent = _get_container_memory()
+            used_mb = used / (1024 * 1024)
+            limit_str = f"{limit / (1024 * 1024):.2f} MB" if limit else "Unlimited"
+            percent_str = f"{percent:.1f}%" if limit else "N/A"
+            
             self.logger.info(
-                "[%s] Memory usage check: %.1f%% | Used: %.2f MB | Available: %.2f MB",
-                step_label, mem.percent, mem.used / (1024*1024), mem.available / (1024*1024)
+                "[%s] Container Memory Check: Used=%.2f MB, Limit=%s, Percent=%s",
+                step_label, used_mb, limit_str, percent_str
             )
-            if mem.percent > 80.0:
+            
+            if limit and percent > 80.0:
                 self.logger.warning(
-                    "[%s] Memory usage exceeded 80%% threshold (%.1f%%)! Triggering gc.collect()",
-                    step_label, mem.percent
+                    "[%s] Memory usage exceeded 80%% threshold (Percent=%s)! Triggering gc.collect()",
+                    step_label, percent_str
                 )
                 gc.collect()
                 return True
@@ -107,18 +156,32 @@ class VideoService:
     ) -> Path:
         self._create_thumbnail(image_paths, paths.thumbnail_path)
         
-        # Start background memory monitoring thread
-        monitor = MemoryMonitor(self.logger, interval=30)
+        # Start background memory monitoring thread (15 seconds interval)
+        monitor = MemoryMonitor(self.logger, interval=15)
         monitor.start()
         
-        scene_clips = []
+        temp_dir = self.settings.storage_dir / "temp_scenes"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        scene_paths = []
         elapsed = 0.0
         max_seconds = self.settings.shorts_max_seconds
-        quality_reduced = False
 
         try:
-            # Initial memory check
-            self._check_memory_and_optimize("Startup")
+            # Initial memory check & startup quality adjustment
+            if self._check_memory_and_optimize("Startup"):
+                orig_res = self.settings.video_resolution
+                new_res = (int(orig_res[0] * 0.7), int(orig_res[1] * 0.7))
+                orig_fps = self.settings.render_fps
+                new_fps = 15 if orig_fps > 15 else 12
+                self.logger.warning(
+                    "Startup memory usage >80%%. Adjusting render profile: "
+                    "Resolution: %s -> %s | FPS: %s -> %s",
+                    orig_res, new_res, orig_fps, new_fps
+                )
+                object.__setattr__(self.settings, "video_resolution", new_res)
+                object.__setattr__(self.settings, "render_fps", new_fps)
+                gc.collect()
 
             for index, segment in enumerate(script.segments, start=1):
                 if elapsed >= max_seconds:
@@ -138,71 +201,95 @@ class VideoService:
                 if duration < audio_clip.duration:
                     audio_clip = self._subclip(audio_clip, 0, duration)
 
-                self.logger.info("Composing scene %s/%s (%.2fs)", index, len(script.segments), duration)
+                self.logger.info("Scene render started: %s/%s (%.2fs)", index, len(script.segments), duration)
                 visual_clip = self._image_clip(image_paths[index - 1], duration, index)
                 overlays = self._caption_clips(segment, duration, elapsed, max_seconds)
                 composed = CompositeVideoClip([visual_clip, *overlays], size=self.settings.video_resolution, use_bgclip=True)
                 composed = self._with_duration(composed, duration)
                 composed = self._with_audio(composed, audio_clip)
                 composed = self._apply_video_transitions(composed)
-                scene_clips.append(composed)
+                
+                scene_path = temp_dir / f"scene_{index}.mp4"
+                self.logger.info("Writing individual scene %s to %s", index, scene_path)
+                composed.write_videofile(
+                    str(scene_path),
+                    fps=self.settings.render_fps,
+                    codec="libx264",
+                    audio_codec="aac",
+                    preset=self.settings.ffmpeg_preset,
+                    logger=None,
+                )
+                
+                # Release memory immediately
+                self._deep_close(composed)
+                gc.collect()
+                
+                self.logger.info("Scene render completed: %s/%s", index, len(script.segments))
+                scene_paths.append(scene_path)
                 elapsed += duration
                 
-                # Check memory after scene creation and collect garbage
-                if self._check_memory_and_optimize(f"Scene {index}"):
-                    quality_reduced = True
+                # Log memory after each scene
+                self._check_memory_and_optimize(f"Post-Scene {index}")
 
-            if not scene_clips:
+            if not scene_paths:
                 raise RuntimeError("No valid scenes were generated; cannot render video")
 
-            # Check memory before video concatenation and write
-            if self._check_memory_and_optimize("Pre-Concatenation") or quality_reduced:
-                # Downscale resolution dynamically if memory is above threshold to prevent write_videofile OOM
-                orig_res = self.settings.video_resolution
-                new_res = (int(orig_res[0] * 0.7), int(orig_res[1] * 0.7))
-                orig_fps = self.settings.render_fps
-                new_fps = 15 if orig_fps > 15 else 12
-                self.logger.warning(
-                    "OOM Protection Triggered. Automatically reducing render profile: "
-                    "Resolution: %s -> %s | FPS: %s -> %s",
-                    orig_res, new_res, orig_fps, new_fps
-                )
-                # Apply quality reductions to settings so caption generation and composition scale down
-                object.__setattr__(self.settings, "video_resolution", new_res)
-                object.__setattr__(self.settings, "render_fps", new_fps)
+            # Final concatenation using FFmpeg concat demuxer
+            self.logger.info("Final merge started")
+            list_path = temp_dir / "concat_list.txt"
+            concat_content = "\n".join([f"file '{str(p.resolve()).replace('\\', '/')}'" for p in scene_paths])
+            list_path.write_text(concat_content, encoding="utf-8")
+            
+            merged_raw_path = temp_dir / "merged_raw.mp4"
+            import subprocess
+            concat_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(list_path),
+                "-c", "copy",
+                str(merged_raw_path)
+            ]
+            self.logger.info("Running FFmpeg concat: %s", " ".join(concat_cmd))
+            subprocess.run(concat_cmd, check=True, capture_output=True)
+            
+            # Mix background music
+            music_path = self.settings.audio_dir / "background_music.mp3"
+            if not music_path.exists() or music_path.stat().st_size == 0:
+                self._download_background_music(music_path)
                 
-                # Resize all scene clips to new resolution
-                scene_clips = [clip.resized(new_size=new_res) for clip in scene_clips]
-                gc.collect()
+            final_video_path = paths.video_path
+            if music_path.exists() and music_path.stat().st_size > 0:
+                mix_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(merged_raw_path),
+                    "-i", str(music_path),
+                    "-filter_complex",
+                    f"[0:a]volume={self.settings.voice_volume}[a0];"
+                    f"[1:a]volume={self.settings.background_music_volume}[a1];"
+                    "[a0][a1]amix=inputs=2:duration=first[aout]",
+                    "-map", "0:v",
+                    "-map", "[aout]",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    str(final_video_path)
+                ]
+                self.logger.info("Running FFmpeg audio mix: %s", " ".join(mix_cmd))
+                subprocess.run(mix_cmd, check=True, capture_output=True)
+            else:
+                import shutil
+                shutil.copy2(merged_raw_path, final_video_path)
+                
+            self.logger.info("Final merge completed: %s", final_video_path)
 
-            self.logger.info("Rendering %s scenes into %s", len(scene_clips), paths.video_path)
-            final_video = concatenate_videoclips(scene_clips, method="compose")
-            if final_video.audio:
-                music_clip = self._background_music(final_video.duration)
-                music_composite = CompositeAudioClip([final_video.audio, music_clip])
-                final_video = self._with_audio(final_video, music_composite)
+            # Cleanup temporary scene files
+            try:
+                import shutil
+                shutil.rmtree(str(temp_dir), ignore_errors=True)
+                self.logger.info("Temporary scene files deleted successfully")
+            except Exception as exc:
+                self.logger.warning("Failed to clean up temporary scene files: %s", exc)
 
-            # Final memory check before write
-            self._check_memory_and_optimize("Pre-Write")
-
-            final_video.write_videofile(
-                str(paths.video_path),
-                fps=self.settings.render_fps,
-                codec="libx264",
-                audio_codec="aac",
-                preset=self.settings.ffmpeg_preset,
-                temp_audiofile=str(self.settings.storage_dir / "temp-audio.m4a"),
-                remove_temp=True,
-            )
-            
-            # Post-write cleanup
-            self.logger.info("Video render finished. Releasing all video clips and subclips.")
-            self._deep_close(final_video)
-            for clip in scene_clips:
-                self._deep_close(clip)
-            scene_clips.clear()
-            gc.collect()
-            
         finally:
             monitor.stop()
             monitor.join(timeout=2.0)

@@ -61,6 +61,7 @@ class Settings:
     retry_backoff_seconds: float
     image_provider: str
     gemini_image_model: str
+    enable_ai_images: bool
     hf_token: str | None
     hf_image_model: str
     hf_provider: str | None
@@ -103,6 +104,21 @@ class Settings:
                 missing.append(f"YOUTUBE_CLIENT_SECRETS_FILE not found: {self.youtube_client_secrets_file}")
             if not self.youtube_token_file.parent.exists():
                 missing.append(f"YouTube token directory does not exist: {self.youtube_token_file.parent}")
+
+        import subprocess
+        for tool in ("ffmpeg", "ffprobe"):
+            try:
+                subprocess.run([tool, "-version"], capture_output=True, check=True)
+            except Exception as exc:
+                missing.append(f"{tool} binary is missing or not executable in PATH: {exc}")
+
+        for folder in (self.storage_dir, self.assets_dir, self.final_dir):
+            try:
+                test_file = folder / ".write_test"
+                test_file.write_text("test")
+                test_file.unlink()
+            except Exception as exc:
+                missing.append(f"Directory {folder} is not writable or cannot create test files: {exc}")
 
         if self.min_segments < 8:
             missing.append("MIN_SEGMENTS must be at least 8")
@@ -234,7 +250,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         retry_attempts=_int_env("RETRY_ATTEMPTS", 3),
         retry_backoff_seconds=_float_env("RETRY_BACKOFF_SECONDS", 1.5),
         image_provider=os.getenv("IMAGE_PROVIDER", "gemini").strip().lower(),
-        gemini_image_model=os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"),
+        gemini_image_model=os.getenv("GEMINI_IMAGE_MODEL", "imagen-4.0-fast-generate-001"),
+        enable_ai_images=_bool_env("ENABLE_AI_IMAGES", False),
         hf_token=os.getenv("HF_TOKEN"),
         hf_image_model=os.getenv("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell"),
         hf_provider=os.getenv("HF_PROVIDER", "fal-ai") or None,

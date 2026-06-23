@@ -10,6 +10,7 @@ from pathlib import Path
 
 import requests
 from google import genai
+from google.genai import types
 from PIL import Image, ImageDraw, ImageFilter
 
 from config import Settings
@@ -92,71 +93,74 @@ class ImageService:
                     return existing, "existing", max(plan.confidence, 0.72)
                 self.logger.warning("Existing visual was already used in this video; replacing it")
 
-        cached = self._relevance_cache_path(plan)
-        if cached.exists() and cached.stat().st_size > 0:
-            shutil.copy2(cached, output_path)
-            self._ensure_vertical(output_path)
-            if self._claim_unique(output_path):
-                return output_path, "cache", max(plan.confidence, 0.82)
-            self.logger.warning("Cached visual was already used in this video; fetching a unique replacement")
-
         attempts: list[tuple[str, float]] = []
-        providers = self._provider_order()
-        for provider in providers:
-            try:
-                if provider == "huggingface":
-                    if self._hf_disabled or self._hf_images_used >= self.settings.hf_max_images_per_video:
-                        continue
-                    generated = self._huggingface_image(plan.prompt, output_path)
-                    self._hf_images_used += 1
-                    confidence = min(0.98, plan.confidence + 0.08)
-                elif provider == "gemini":
-                    if not self._gemini_image_available:
-                        continue
+
+        # 1. Pexels (primary)
+        try:
+            self.logger.info("Attempting primary provider: Pexels")
+            generated = self._pexels_image(plan, output_path)
+            confidence = min(0.96, plan.confidence + 0.12)
+            self._ensure_vertical(generated)
+            if self._claim_unique(generated):
+                # Cache it for future runs
+                cached = self._relevance_cache_path(plan)
+                shutil.copy2(generated, cached)
+                return generated, "pexels", confidence
+            else:
+                attempts.append(("pexels_duplicate", 0.0))
+                self.logger.warning("Pexels returned a visual already used in this video; trying next fallback")
+        except Exception as exc:
+            attempts.append(("pexels", 0.0))
+            self.logger.warning("Pexels visual failed for category %s: %s", plan.category, exc)
+
+        # 2. Imagen 4 (optional, depending on ENABLE_AI_IMAGES flag)
+        if self.settings.enable_ai_images:
+            if self._gemini_image_available:
+                try:
+                    self.logger.info("Attempting optional provider: Gemini Imagen 4")
                     generated = self._gemini_image(plan.prompt, output_path)
                     confidence = min(0.98, plan.confidence + 0.08)
-                elif provider == "pexels":
-                    generated = self._pexels_image(plan, output_path)
-                    confidence = min(0.96, plan.confidence + 0.12)
-                elif provider == "pollinations":
-                    generated = self._pollinations_image(plan.prompt, output_path)
-                    confidence = plan.confidence
+                    self._ensure_vertical(generated)
+                    if self._claim_unique(generated):
+                        # Cache it
+                        cached = self._relevance_cache_path(plan)
+                        shutil.copy2(generated, cached)
+                        return generated, "gemini", confidence
+                    else:
+                        attempts.append(("gemini_duplicate", 0.0))
+                        self.logger.warning("Gemini returned a visual already used in this video; trying next fallback")
+                except Exception as exc:
+                    attempts.append(("gemini", 0.0))
+                    if "NOT_FOUND" in str(exc) or "not supported" in str(exc):
+                        self._gemini_image_available = False
+                    self.logger.warning("Gemini visual failed for category %s: %s", plan.category, exc)
+        else:
+            self.logger.info("Gemini AI image generation is disabled (ENABLE_AI_IMAGES=false)")
+
+        # 3. Local Cache
+        cached = self._relevance_cache_path(plan)
+        if cached.exists() and cached.stat().st_size > 0:
+            try:
+                self.logger.info("Attempting fallback: Local Cache")
+                shutil.copy2(cached, output_path)
+                self._ensure_vertical(output_path)
+                if self._claim_unique(output_path):
+                    return output_path, "cache", max(plan.confidence, 0.82)
                 else:
-                    continue
-
-                if confidence < self.settings.visual_min_confidence:
-                    attempts.append((provider, confidence))
-                    self.logger.warning(
-                        "Visual provider %s produced low confidence %.2f; trying a better match",
-                        provider,
-                        confidence,
-                    )
-                    continue
-
-                self._ensure_vertical(generated)
-                if not self._claim_unique(generated):
-                    attempts.append((f"{provider}_duplicate", 0.0))
-                    self.logger.warning(
-                        "%s returned a visual already used in this video; trying another provider",
-                        provider,
-                    )
-                    continue
-                shutil.copy2(generated, cached)
-                return generated, provider, confidence
+                    self.logger.warning("Cached visual was already used in this video; using local fallback")
             except Exception as exc:
-                attempts.append((provider, 0.0))
-                if provider == "huggingface" and ("402" in str(exc) or "depleted" in str(exc).lower()):
-                    self._hf_disabled = True
-                    self.logger.warning("Hugging Face credits unavailable; disabling HF for this run")
-                elif provider == "gemini" and ("NOT_FOUND" in str(exc) or "not supported" in str(exc)):
-                    self._gemini_image_available = False
-                self.logger.warning("%s visual failed for category %s: %s", provider, plan.category, exc)
+                self.logger.warning("Local Cache retrieval failed: %s", exc)
 
+        # 4. Local Fallback (gradients)
         local = self._local_fallback_image(segment, plan, output_path)
         local_confidence = max(0.76, plan.confidence)
         self._ensure_vertical(local)
         self._claim_unique(local)
-        shutil.copy2(local, cached)
+        # Cache the local fallback too to save future rendering
+        try:
+            shutil.copy2(local, cached)
+        except Exception:
+            pass
         self.logger.info(
             "Using relevant local fallback for %s after provider attempts: %s",
             plan.category,
@@ -164,32 +168,33 @@ class ImageService:
         )
         return local, f"local_{plan.category}", local_confidence
 
-    def _provider_order(self) -> list[str]:
-        provider = self.settings.image_provider
-        if provider == "hybrid":
-            return ["huggingface", "pexels", "pollinations"]
-        if provider == "huggingface":
-            return ["huggingface", "pexels", "pollinations"]
-        if provider == "gemini":
-            return ["gemini", "pexels", "pollinations"]
-        if provider == "pexels":
-            return ["pexels", "pollinations"]
-        return ["pollinations", "pexels"]
-
     def _gemini_image(self, prompt: str, output_path: Path) -> Path:
-        response = self.client.models.generate_content(
-            model=self.settings.gemini_image_model,
-            contents=self._vertical_prompt(prompt),
-        )
-        for candidate in response.candidates or []:
-            content = getattr(candidate, "content", None)
-            for part in getattr(content, "parts", []) or []:
-                inline_data = getattr(part, "inline_data", None)
-                data = getattr(inline_data, "data", None)
-                if data:
-                    output_path.write_bytes(data)
-                    return output_path
-        raise RuntimeError("Gemini image model returned no inline image")
+        import time
+        model_name = self.settings.gemini_image_model
+        self.logger.info("Generating Gemini AI image using model: %s", model_name)
+        start_time = time.time()
+        try:
+            result = self.client.models.generate_images(
+                model=model_name,
+                prompt=self._vertical_prompt(prompt),
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    output_mime_type="image/jpeg",
+                    aspect_ratio="9:16",
+                )
+            )
+            latency = time.time() - start_time
+            if not result.generated_images:
+                raise RuntimeError("No images returned from Gemini API")
+            
+            image_bytes = result.generated_images[0].image.image_bytes
+            output_path.write_bytes(image_bytes)
+            self.logger.info("Gemini AI image generated successfully. Latency: %.3fs", latency)
+            return output_path
+        except Exception as exc:
+            latency = time.time() - start_time
+            self.logger.error("Gemini AI image generation failed. Latency: %.3fs. Error: %s", latency, exc)
+            raise
 
     def _huggingface_image(self, prompt: str, output_path: Path) -> Path:
         if not self.settings.hf_token:

@@ -90,7 +90,6 @@ class VideoService:
             preset=self.settings.ffmpeg_preset,
             temp_audiofile=str(self.settings.storage_dir / "temp-audio.m4a"),
             remove_temp=True,
-            threads=1,
         )
         final_video.close()
         for clip in scene_clips:
@@ -116,34 +115,60 @@ class VideoService:
         try:
             clip = self._with_duration(ImageClip(str(image_path)), duration)
             clip = self._resize_cover(clip, target_size)
-            return self._ken_burns(clip, duration, index)
+            return self._ken_burns(clip, duration, index, image_path)
         except Exception as exc:
             self.logger.warning("Could not load image %s: %s", image_path, exc)
             return self._with_duration(ColorClip(size=target_size, color=(12, 16, 22)), duration)
 
-    def _ken_burns(self, clip, duration: float, index: int):
+    def _ken_burns(self, clip, duration: float, index: int, image_path: Path):
         try:
             target_w, target_h = self.settings.video_resolution
             pan_left_to_right = index % 2 == 0
 
+            # Pre-scale the original image *once* to exactly 1.1x of target resolution using BILINEAR
+            with Image.open(image_path) as img:
+                source_w, source_h = img.size
+                scale = max((target_w * 1.1) / source_w, (target_h * 1.1) / source_h)
+                pre_w = math.ceil(source_w * scale)
+                pre_h = math.ceil(source_h * scale)
+                pre_scaled = img.resize((pre_w, pre_h), Image.Resampling.BILINEAR)
+                
+                # Crop to center cover at 1.1x target size
+                left = (pre_w - int(target_w * 1.1)) // 2
+                top = (pre_h - int(target_h * 1.1)) // 2
+                pre_scaled_cover = pre_scaled.crop((left, top, left + int(target_w * 1.1), top + int(target_h * 1.1)))
+                pre_scaled_array = np.array(pre_scaled_cover)
+
+            pre_w, pre_h = pre_scaled_cover.size # Exactly 1.1 * target_w and 1.1 * target_h
+
             def transform(get_frame, t: float):
                 progress = min(1.0, max(0.0, float(t) / max(duration, 0.01)))
-                scale = 1.03 + (0.055 * progress)
-                frame = get_frame(t).astype("uint8")
-                new_w = max(target_w, math.ceil(frame.shape[1] * scale))
-                new_h = max(target_h, math.ceil(frame.shape[0] * scale))
-                resized = np.array(
-                    Image.fromarray(frame).resize((new_w, new_h), Image.Resampling.LANCZOS)
-                )
-
-                max_x = max(0, new_w - target_w)
-                max_y = max(0, new_h - target_h)
+                
+                # Zoom factor on the pre-scaled image
+                # At progress=0, crop a slightly larger box (zoom out)
+                # At progress=1, crop a slightly smaller box (zoom in)
+                zoom = 1.08 - (0.07 * progress) if index % 2 == 0 else 1.01 + (0.07 * progress)
+                
+                crop_w = int(target_w * zoom)
+                crop_h = int(target_h * zoom)
+                
+                max_x = pre_w - crop_w
+                max_y = pre_h - crop_h
+                
                 pan_progress = 0.2 + (0.6 * progress)
                 if not pan_left_to_right:
                     pan_progress = 1.0 - pan_progress
+                    
                 x1 = min(max_x, max(0, round(max_x * pan_progress)))
                 y1 = min(max_y, max(0, round(max_y * 0.5)))
-                return resized[y1:y1 + target_h, x1:x1 + target_w]
+                
+                crop = pre_scaled_array[y1:y1 + crop_h, x1:x1 + crop_w]
+                
+                # Resize the cropped window to final target size using BILINEAR
+                resized = np.array(
+                    Image.fromarray(crop).resize((target_w, target_h), Image.Resampling.BILINEAR)
+                )
+                return resized
 
             return clip.transform(transform, keep_duration=True)
         except Exception as exc:

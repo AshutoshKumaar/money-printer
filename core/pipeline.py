@@ -34,6 +34,25 @@ class ShortsPipeline:
     def validate_youtube_authentication(self) -> None:
         self.youtube.validate_authentication()
 
+    def validate_gemini_connectivity(self) -> None:
+        self.logger.info("Validating Gemini API key connectivity at startup...")
+        from core.retry import retry_call
+        try:
+            retry_call(
+                lambda: self.gemini.client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents="Startup connectivity check.",
+                ),
+                attempts=self.settings.retry_attempts,
+                backoff_seconds=self.settings.retry_backoff_seconds,
+                logger=self.logger,
+                label="Gemini startup connectivity check",
+            )
+            self.logger.info("Gemini API connectivity check succeeded")
+        except Exception as exc:
+            self.logger.error("Gemini API connectivity check failed: %s", exc)
+            raise ValueError(f"Startup validation failed: Gemini API key is invalid or unreachable. Error: {exc}") from exc
+
     def run(
         self,
         topic: str | None,

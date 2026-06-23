@@ -19,7 +19,7 @@ def generate_ai_image(prompt: str, filename: str) -> str | None:
     output_path = settings.image_dir / filename
     try:
         segment = Segment(text="", subtitle="", image_prompt=prompt)
-        generated = ImageService(settings, logger)._generate_one(segment, output_path)
+        generated = ImageService(settings, logger)._gemini_image(prompt, output_path)
         ImageService(settings, logger)._ensure_vertical(generated)
         return str(generated)
     except Exception as exc:

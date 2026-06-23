@@ -41,6 +41,7 @@ def main() -> int:
         needs_youtube = args.auth_only or args.upload_only or args.schedule or (not args.dry_run and not args.generate_only)
         settings.validate(require_youtube=needs_youtube)
         pipeline = ShortsPipeline(settings, logger)
+        pipeline.validate_gemini_connectivity()
         if needs_youtube:
             pipeline.validate_youtube_authentication()
 

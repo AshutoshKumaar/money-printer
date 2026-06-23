@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -16,12 +15,13 @@ class CaptionService:
         self.settings = settings
 
     def chunks(self, text: str) -> list[str]:
-        clean_text = re.sub(r"\s+", " ", text).strip()
+        clean_text = self._clean_caption_text(text)
         words = clean_text.split()
         if not words:
             return []
         chunk_size = max(2, self.settings.caption_words_per_chunk)
-        return [" ".join(words[index:index + chunk_size]) for index in range(0, len(words), chunk_size)]
+        chunks = [" ".join(words[index:index + chunk_size]) for index in range(0, len(words), chunk_size)]
+        return [chunk[:42].strip() for chunk in chunks if chunk.strip()]
 
     def make_overlay(self, caption: str, elapsed: float, total_seconds: float) -> np.ndarray:
         width, height = self.settings.video_resolution
@@ -34,11 +34,16 @@ class CaptionService:
 
     def _load_font(self, size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
             "C:/Windows/Fonts/impact.ttf",
             "C:/Windows/Fonts/ariblk.ttf",
             "C:/Windows/Fonts/NirmalaB.ttf",
             "C:/Windows/Fonts/Arialbd.ttf",
         ] if bold else [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
             "C:/Windows/Fonts/Nirmala.ttf",
             "C:/Windows/Fonts/Arial.ttf",
         ]
@@ -92,64 +97,78 @@ class CaptionService:
         if not text:
             return
         caption = text.upper()
-        max_width = int(width * 0.84)
-        font_size = 76
+        max_width = int(width * 0.88)
+        font_size = max(46, int(width * 0.088))
         temp_draw = ImageDraw.Draw(Image.new("RGBA", (width, height)))
         lines = [caption]
         line_boxes = []
 
-        while font_size > 44:
+        while font_size > max(34, int(width * 0.052)):
             font = self._load_font(font_size, bold=True)
             lines = self._wrap_lines(temp_draw, caption, font, max_width)
-            line_boxes = [temp_draw.textbbox((0, 0), line, font=font, stroke_width=4) for line in lines]
-            total_height = sum(box[3] - box[1] for box in line_boxes) + max(0, len(lines) - 1) * 12
-            if len(lines) <= 2 and total_height < 190:
+            stroke_width = max(3, width // 210)
+            line_boxes = [temp_draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width) for line in lines]
+            total_height = sum(box[3] - box[1] for box in line_boxes) + max(0, len(lines) - 1) * 10
+            if len(lines) <= 2 and total_height < int(height * 0.13):
                 break
-            font_size -= 4
+            font_size -= 3
 
         font = self._load_font(font_size, bold=True)
+        stroke_width = max(3, width // 210)
+        line_boxes = [temp_draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width) for line in lines]
         line_heights = [box[3] - box[1] for box in line_boxes]
         max_line_width = max((box[2] - box[0] for box in line_boxes), default=0)
-        total_height = sum(line_heights) + max(0, len(lines) - 1) * 12
-        box_padding_x = 44
-        box_padding_y = 26
-        box_width = min(width - 80, max_line_width + box_padding_x * 2)
+        total_height = sum(line_heights) + max(0, len(lines) - 1) * 10
+        box_padding_x = max(28, width // 28)
+        box_padding_y = max(16, height // 72)
+        box_width = min(width - max(44, width // 12), max_line_width + box_padding_x * 2)
         box_height = total_height + box_padding_y * 2
         box_left = (width - box_width) // 2
-        box_top = int(height * 0.68) - box_height // 2
+        box_top = int(height * 0.70) - box_height // 2
         box_right = box_left + box_width
         box_bottom = box_top + box_height
 
         caption_image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(caption_image)
         draw.rounded_rectangle(
-            [box_left + 12, box_top + 12, box_right + 12, box_bottom + 12],
-            radius=28,
-            fill=(0, 0, 0, 110),
+            [box_left + 8, box_top + 10, box_right + 8, box_bottom + 10],
+            radius=16,
+            fill=(0, 0, 0, 95),
         )
         draw.rounded_rectangle(
             [box_left, box_top, box_right, box_bottom],
-            radius=28,
-            fill=(6, 9, 15, 215),
-            outline=(255, 255, 255, 48),
-            width=2,
+            radius=16,
+            fill=(3, 5, 9, 205),
+            outline=(255, 255, 255, 35),
+            width=1,
         )
-        draw.rounded_rectangle([box_left, box_top, box_left + 12, box_bottom], radius=5, fill=(255, 223, 0, 240))
+        draw.rounded_rectangle(
+            [box_left + 8, box_top + 8, box_left + 15, box_bottom - 8],
+            radius=4,
+            fill=(255, 214, 0, 240),
+        )
 
         current_y = box_top + box_padding_y
         for line, line_height in zip(lines, line_heights):
             words = line.split()
-            word_widths = [draw.textbbox((0, 0), word, font=font, stroke_width=4)[2] for word in words]
-            gap = 20
-            line_width = sum(word_widths) + max(0, len(words) - 1) * gap
+            word_boxes = [draw.textbbox((0, 0), word, font=font, stroke_width=stroke_width) for word in words]
+            word_widths = [box[2] - box[0] for box in word_boxes]
+            gap = max(8, width // 65)
+            line_width = min(max_width, sum(word_widths) + max(0, len(words) - 1) * gap)
             x = (width - line_width) // 2
             for word_index, word in enumerate(words):
-                highlight = word_index == len(words) - 1 or any(char.isdigit() for char in word)
+                highlight = word_index == len(words) - 1 or any(char.isdigit() for char in word) or len(word) >= 8
                 fill = (255, 223, 0, 255) if highlight else (255, 255, 255, 255)
                 stroke = (25, 20, 0, 255) if highlight else (0, 0, 0, 245)
-                draw.text((x, current_y), word, font=font, fill=fill, stroke_width=4, stroke_fill=stroke)
+                draw.text((x, current_y), word, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke)
                 x += word_widths[word_index] + gap
-            current_y += line_height + 12
+            current_y += line_height + 10
 
-        rotated = caption_image.rotate(-3, resample=Image.BICUBIC, center=(width // 2, box_top + box_height // 2))
-        image.alpha_composite(rotated)
+        image.alpha_composite(caption_image)
+
+    @staticmethod
+    def _clean_caption_text(text: str) -> str:
+        text = re.sub(r"https?://\S+", "", text)
+        text = re.sub(r"[#*_`~|<>]+", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text

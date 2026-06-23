@@ -66,7 +66,7 @@ class GeminiService:
     def generate_script(self, topic: str) -> Script:
         if self._quota_exhausted:
             self.logger.warning("Gemini quota exhausted; using full fallback script")
-            return self._fallback_script(topic)
+            return self._hard_limit_narration(self._fallback_script(topic))
 
         prompt = self._script_prompt(topic)
         try:
@@ -89,7 +89,7 @@ class GeminiService:
             if self._is_quota_error(exc):
                 self._quota_exhausted = True
             self.logger.error("Gemini script generation failed, using full fallback script: %s", exc)
-            return self._fallback_script(topic)
+            return self._hard_limit_narration(self._fallback_script(topic))
 
     def improve_metadata(self, script: Script) -> Script:
         if self._quota_exhausted:
@@ -295,6 +295,20 @@ class GeminiService:
             ("सबसे हैरान करने वाली बात अभी बाकी है।", "Sabse hairan karne wali baat abhi baaki hai."),
             ("अगर यह सच है, तो हमारी सोच बदल सकती है।", "Agar yeh sach hai, toh hamari soch badal sakti hai."),
             ("ऐसे और रहस्यों के लिए फॉलो जरूर करें।", "Aise aur rahasyon ke liye follow zaroor karein."),
+        ]
+        templates = [
+            ("रुकिए, यह सच आपको सच में चौंका सकता है।", "RUKIYE, YEH FACT CHONKA DEGA"),
+            (f"{topic} के पीछे कहानी साधारण नहीं है।", "ISKE PEECHE STORY ALAG HAI"),
+            ("पहली नज़र में यह बात बिल्कुल सामान्य लगती है।", "PEHLI NAZAR MEIN NORMAL"),
+            ("लेकिन असली रहस्य छोटी-छोटी डिटेल्स में छिपा होता है।", "ASLI RAAZ DETAILS MEIN HAI"),
+            ("वैज्ञानिक भी ऐसे सवालों को हल्के में नहीं लेते।", "SCIENTISTS BHI ISSE STUDY KARTE"),
+            ("क्योंकि कई बार जवाब हमारी सोच से उल्टा निकलता है।", "JAWAAB SOCH SE ULTA HOTA"),
+            ("इसीलिए यह विषय इंटरनेट पर बार-बार चर्चा में आता है।", "YEH TOPIC VIRAL KYUN HOTA"),
+            ("अब सबसे हैरान करने वाला हिस्सा ध्यान से सुनिए।", "AB SHOCKING PART SUNO"),
+            ("एक छोटी चीज़ भी बड़ी वजह छिपा सकती है।", "CHHOTI CHEEZ, BADI WAJAH"),
+            ("यही वजह इसे इतना दिलचस्प और यादगार बनाती है।", "ISILIYE YEH YAAD REHTA HAI"),
+            ("आपको क्या लगता है, सच क्या हो सकता है?", "AAPKA GUESS KYA HAI"),
+            ("अपनी राय कमेंट करें, और ऐसे फैक्ट्स के लिए फॉलो करें।", "COMMENT KARO AUR FOLLOW KARO"),
         ]
         segments = [
             Segment(

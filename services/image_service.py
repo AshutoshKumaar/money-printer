@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import random
+import re
 import shutil
 import urllib.parse
 from pathlib import Path
@@ -43,33 +44,44 @@ class ImageService:
         for index, segment in enumerate(script.segments, start=1):
             output_path = paths.image_dir / f"scene_{index:02d}.jpg"
             plan = self.matcher.plan(segment, script.topic)
-            self.logger.info(
-                "Visual plan %s/%s: category=%s confidence=%.2f query=%s",
+            
+            selected_path, provider, confidence, selected_id, selected_url, used_query = self._select_visual(
                 index,
-                len(script.segments),
-                plan.category,
-                plan.confidence,
-                plan.query,
-            )
-
-            selected_path, provider, confidence = self._select_visual(
                 segment,
                 plan,
+                script.topic,
                 output_path,
                 use_existing=use_existing,
             )
+            
+            # Post-selection diversity score for logging
+            diversity_score = self._calculate_diversity_score(index)
+            
+            # Log required by the user (Requirement 8)
+            self.logger.info("--- Visual Diversity Log ---")
+            self.logger.info("Scene Number: %s", index)
+            self.logger.info("Query: %s", used_query)
+            self.logger.info("Selected Image ID: %s", selected_id)
+            self.logger.info("Selected Image URL: %s", selected_url)
+            self.logger.info("Source (Pexels/Fallback): %s", "Pexels" if provider == "pexels" else "Fallback")
+            self.logger.info("Visual Diversity Score: %.1f%%", diversity_score)
+            self.logger.info("----------------------------")
+            
             segment.visual_category = plan.category
             segment.visual_provider = provider
             segment.visual_confidence = confidence
-            self._ensure_vertical(selected_path)
             image_paths.append(selected_path)
+            
             visual_manifest.append(
                 {
                     "scene": index,
                     "provider": provider,
                     "path": str(selected_path),
                     "confidence": confidence,
+                    "selected_id": selected_id,
+                    "selected_url": selected_url,
                     "visual_plan": plan.to_dict(),
+                    "diversity_score": diversity_score,
                 }
             )
 
@@ -79,94 +91,273 @@ class ImageService:
 
     def _select_visual(
         self,
+        index: int,
         segment: Segment,
         plan: VisualPlan,
+        topic: str,
         output_path: Path,
         *,
         use_existing: bool,
-    ) -> tuple[Path, str, float]:
-        if use_existing:
+    ) -> tuple[Path, str, float, str, str, str]:
+        # Calculate visual diversity score (based on previous scenes)
+        diversity_score = self._calculate_diversity_score(index - 1)
+        # If diversity score drops below 80%, force a new search (Requirement 9)
+        force_fresh = diversity_score < 80.0
+        
+        if force_fresh:
+            self.logger.warning("Visual Diversity Score is %.1f%% (<80%%). Forcing fresh search!", diversity_score)
+
+        if use_existing and not force_fresh:
             existing = self._cached_image(output_path)
             if existing:
                 self._ensure_vertical(existing)
                 if self._claim_unique(existing):
-                    return existing, "existing", max(plan.confidence, 0.72)
+                    return existing, "existing", max(plan.confidence, 0.72), "N/A", "N/A", plan.query
                 self.logger.warning("Existing visual was already used in this video; replacing it")
 
-        attempts: list[tuple[str, float]] = []
+        # Generate exactly 3 alternative queries (Requirement 5)
+        alts = self._generate_alternative_queries(plan, segment, topic)
+        self.logger.info("Generated alternative queries: %s", alts)
 
-        # 1. Pexels (primary)
+        # 1. Pexels (Primary)
         try:
             self.logger.info("Attempting primary provider: Pexels")
-            generated = self._pexels_image(plan, output_path)
-            confidence = min(0.96, plan.confidence + 0.12)
+            # Retry searches using alternative queries before using fallback (Requirement 6)
+            photo_id, image_url, generated, used_q = self._pexels_image(
+                plan, output_path, force_fresh=force_fresh, alternative_queries=alts
+            )
             self._ensure_vertical(generated)
             if self._claim_unique(generated):
-                # Cache it for future runs
                 cached = self._relevance_cache_path(plan)
                 shutil.copy2(generated, cached)
-                return generated, "pexels", confidence
+                return generated, "pexels", min(0.96, plan.confidence + 0.12), str(photo_id), image_url, used_q
             else:
-                attempts.append(("pexels_duplicate", 0.0))
-                self.logger.warning("Pexels returned a visual already used in this video; trying next fallback")
+                self.logger.warning("Pexels returned a duplicate photo; trying next fallbacks")
         except Exception as exc:
-            attempts.append(("pexels", 0.0))
-            self.logger.warning("Pexels visual failed for category %s: %s", plan.category, exc)
+            self.logger.warning("Pexels failed: %s", exc)
 
-        # 2. Imagen 4 (optional, depending on ENABLE_AI_IMAGES flag)
-        if self.settings.enable_ai_images:
+        # 2. Imagen 4 (Fallback if enabled)
+        if self.settings.enable_ai_images and not force_fresh:
             if self._gemini_image_available:
                 try:
                     self.logger.info("Attempting optional provider: Gemini Imagen 4")
                     generated = self._gemini_image(plan.prompt, output_path)
-                    confidence = min(0.98, plan.confidence + 0.08)
                     self._ensure_vertical(generated)
                     if self._claim_unique(generated):
-                        # Cache it
                         cached = self._relevance_cache_path(plan)
                         shutil.copy2(generated, cached)
-                        return generated, "gemini", confidence
-                    else:
-                        attempts.append(("gemini_duplicate", 0.0))
-                        self.logger.warning("Gemini returned a visual already used in this video; trying next fallback")
+                        return generated, "gemini", min(0.98, plan.confidence + 0.08), "AI", "N/A", plan.query
                 except Exception as exc:
-                    attempts.append(("gemini", 0.0))
                     if "NOT_FOUND" in str(exc) or "not supported" in str(exc):
                         self._gemini_image_available = False
-                    self.logger.warning("Gemini visual failed for category %s: %s", plan.category, exc)
+                    self.logger.warning("Gemini visual failed: %s", exc)
+
+        # 3. Local Cache (Fallback)
+        if not force_fresh:
+            cached = self._relevance_cache_path(plan)
+            if cached.exists() and cached.stat().st_size > 0:
+                try:
+                    self.logger.info("Attempting fallback: Local Cache")
+                    shutil.copy2(cached, output_path)
+                    self._ensure_vertical(output_path)
+                    if self._claim_unique(output_path):
+                        return output_path, "cache", max(plan.confidence, 0.82), "N/A", "N/A", plan.query
+                except Exception as exc:
+                    self.logger.warning("Local Cache failed: %s", exc)
+
+        # 4. Local Fallback (guaranteed unique) (Requirement 7)
+        attempts = 0
+        while attempts < 10:
+            self._local_fallback_image(segment, plan, output_path, attempts)
+            self._ensure_vertical(output_path)
+            if self._claim_unique(output_path):
+                break
+            attempts += 1
+            
+        return output_path, f"local_{plan.category}", max(0.76, plan.confidence), "Fallback", "N/A", plan.query
+
+    def _calculate_diversity_score(self, count: int) -> float:
+        if count <= 0:
+            return 100.0
+        return (len(self._used_image_digests) / count) * 100.0
+
+    def _clean_query(self, query: str) -> str:
+        # Keep only English words (alphanumeric and dashes) and remove stopwords
+        words = re.findall(r"[a-zA-Z0-9-]+", query)
+        clean = []
+        for w in words:
+            lowered = w.lower()
+            if lowered not in self.matcher.STOPWORDS and len(lowered) >= 3:
+                clean.append(lowered)
+        return " ".join(clean)
+
+    def _generate_alternative_queries(self, plan: VisualPlan, segment: Segment, topic: str) -> list[str]:
+        alts = []
+        
+        # Helper to clean and format a query string
+        def sanitize(q: str) -> str:
+            cleaned = self._clean_query(q)
+            return cleaned.strip()
+
+        # Alt 1: Cleaned version of segment.search_query
+        alt1 = sanitize(segment.search_query)
+        if alt1 and alt1 != plan.query:
+            alts.append(alt1)
+
+        # Alt 2: English keywords + category
+        english_kws = [k for k in plan.keywords if re.fullmatch(r"[a-zA-Z0-9-]+", k)]
+        if len(english_kws) > 2:
+            alt2 = sanitize(f"{' '.join(english_kws[2:5])} {plan.category}")
         else:
-            self.logger.info("Gemini AI image generation is disabled (ENABLE_AI_IMAGES=false)")
+            alt2 = sanitize(f"{' '.join(english_kws)} {plan.category}")
+        if alt2 and alt2 != plan.query and alt2 not in alts:
+            alts.append(alt2)
 
-        # 3. Local Cache
-        cached = self._relevance_cache_path(plan)
-        if cached.exists() and cached.stat().st_size > 0:
-            try:
-                self.logger.info("Attempting fallback: Local Cache")
-                shutil.copy2(cached, output_path)
-                self._ensure_vertical(output_path)
-                if self._claim_unique(output_path):
-                    return output_path, "cache", max(plan.confidence, 0.82)
-                else:
-                    self.logger.warning("Cached visual was already used in this video; using local fallback")
-            except Exception as exc:
-                self.logger.warning("Local Cache retrieval failed: %s", exc)
+        # Alt 3: Cleaned topic + category default terms
+        default_q = self.matcher.CATEGORY_RULES.get(plan.category, {}).get("query", "")
+        alt3 = sanitize(f"{topic} {default_q}")
+        if alt3 and alt3 != plan.query and alt3 not in alts:
+            alts.append(alt3)
 
-        # 4. Local Fallback (gradients)
-        local = self._local_fallback_image(segment, plan, output_path)
-        local_confidence = max(0.76, plan.confidence)
-        self._ensure_vertical(local)
-        self._claim_unique(local)
-        # Cache the local fallback too to save future rendering
-        try:
-            shutil.copy2(local, cached)
-        except Exception:
-            pass
-        self.logger.info(
-            "Using relevant local fallback for %s after provider attempts: %s",
-            plan.category,
-            attempts,
+        # Fallback additions if we don't have 3 unique alternatives:
+        fallbacks = [
+            f"{plan.category} close up",
+            f"cinematic {plan.category}",
+            f"{topic} cinematic",
+            default_q
+        ]
+        for fb in fallbacks:
+            fb_cleaned = sanitize(fb)
+            if len(alts) >= 3:
+                break
+            if fb_cleaned and fb_cleaned != plan.query and fb_cleaned not in alts:
+                alts.append(fb_cleaned)
+
+        # Ensure we always return exactly 3
+        while len(alts) < 3:
+            alts.append(sanitize(default_q))
+            
+        return alts[:3]
+
+    def _pexels_search_and_select(self, query: str, plan: VisualPlan, output_path: Path) -> tuple[int, str, Path] | None:
+        if not self.settings.pexels_api_key:
+            self.logger.warning("PEXELS_API_KEY is missing")
+            return None
+
+        # Fetch at least 20 results per query (Requirement 3)
+        per_page = max(20, self.settings.pexels_max_results)
+        url = (
+            "https://api.pexels.com/v1/search?"
+            f"query={urllib.parse.quote(query)}&per_page={per_page}&orientation=portrait"
         )
-        return local, f"local_{plan.category}", local_confidence
+        try:
+            response = requests.get(
+                url,
+                headers={"Authorization": self.settings.pexels_api_key},
+                timeout=self.settings.request_timeout_seconds,
+            )
+            response.raise_for_status()
+            photos = response.json().get("photos", [])
+        except Exception as exc:
+            self.logger.warning("Pexels query '%s' failed: %s", query, exc)
+            return None
+
+        if not photos:
+            self.logger.warning("No Pexels results for query: %s", query)
+            return None
+
+        # Filter out already used photos (Requirement 1 & 4)
+        available = [
+            photo
+            for photo in photos
+            if int(photo.get("id", 0) or 0) not in self._used_pexels_ids
+        ]
+        
+        if not available:
+            self.logger.warning("Query '%s' returned only photos already used in this video", query)
+            return None
+
+        # Filter for relevance >= 1 (Requirement 4)
+        relevant = []
+        for photo in available:
+            score = self._pexels_relevance(photo, plan)
+            if score >= 1:
+                relevant.append((photo, score))
+
+        if not relevant:
+            self.logger.warning("Query '%s' returned no photos with relevance >= 1", query)
+            return None
+
+        # Randomly select from the relevant unused results (Requirement 4)
+        random.shuffle(relevant)
+        for selected_photo, _ in relevant:
+            photo_id = int(selected_photo.get("id", 0) or 0)
+            src = selected_photo.get("src", {})
+            image_url = src.get("portrait") or src.get("large2x") or src.get("large") or src.get("original")
+            if not image_url:
+                continue
+
+            try:
+                image_response = requests.get(image_url, timeout=self.settings.request_timeout_seconds)
+                image_response.raise_for_status()
+                
+                # Check SHA256 of the content
+                digest = hashlib.sha256(image_response.content).hexdigest()
+                if digest in self._used_image_digests:
+                    self.logger.warning("Pexels photo %s content hash already used, trying another photo", photo_id)
+                    continue
+                
+                output_path.write_bytes(image_response.content)
+                return photo_id, image_url, output_path
+            except Exception as exc:
+                self.logger.error("Failed to download image from Pexels URL %s: %s", image_url, exc)
+                continue
+
+        return None
+
+    def _pexels_image(
+        self,
+        plan: VisualPlan,
+        output_path: Path,
+        force_fresh: bool = False,
+        alternative_queries: list[str] = None
+    ) -> tuple[int, str, Path, str]:
+        if not self.settings.pexels_api_key:
+            raise RuntimeError("PEXELS_API_KEY is missing")
+            
+        queries = [plan.query]
+        if alternative_queries:
+            queries.extend(alternative_queries)
+            
+        if force_fresh:
+            # Mutate queries to force a new search (Requirement 9)
+            category_kws = self.matcher.CATEGORY_RULES.get(plan.category, {}).get("keywords", [])
+            mutated_queries = []
+            for q in queries:
+                if category_kws:
+                    mutated_queries.append(f"{q} {random.choice(category_kws)}")
+                else:
+                    mutated_queries.append(f"{q} fresh")
+            queries = mutated_queries
+
+        for q in queries:
+            result = self._pexels_search_and_select(q, plan, output_path)
+            if result is not None:
+                photo_id, image_url, path = result
+                self._used_pexels_ids.add(photo_id)
+                return photo_id, image_url, path, q
+                
+        raise RuntimeError(f"All Pexels search queries failed to find unused relevant images for category {plan.category}")
+
+    def _pexels_relevance(self, photo: dict, plan: VisualPlan) -> int:
+        text = " ".join(
+            [
+                str(photo.get("alt", "")),
+                str(photo.get("photographer", "")),
+            ]
+        ).lower()
+        category_terms = [plan.category, *plan.keywords[:6]]
+        return sum(1 for term in category_terms if term.lower() in text)
 
     def _gemini_image(self, prompt: str, output_path: Path) -> Path:
         import time
@@ -218,65 +409,6 @@ class ImageService:
         image.convert("RGB").save(output_path, quality=92)
         return output_path
 
-    def _pexels_image(self, plan: VisualPlan, output_path: Path) -> Path:
-        if not self.settings.pexels_api_key:
-            raise RuntimeError("PEXELS_API_KEY is missing")
-        url = (
-            "https://api.pexels.com/v1/search?"
-            f"query={urllib.parse.quote(plan.query)}&per_page={self.settings.pexels_max_results}&orientation=portrait"
-        )
-        response = requests.get(
-            url,
-            headers={"Authorization": self.settings.pexels_api_key},
-            timeout=self.settings.request_timeout_seconds,
-        )
-        response.raise_for_status()
-        photos = response.json().get("photos", [])
-        if not photos:
-            raise RuntimeError(f"No Pexels results for relevant query: {plan.query}")
-
-        available = [
-            photo
-            for photo in photos
-            if int(photo.get("id", 0) or 0) not in self._used_pexels_ids
-        ]
-        if not available:
-            raise RuntimeError(f"Pexels returned only photos already used in this video: {plan.query}")
-
-        ranked = sorted(
-            available,
-            key=lambda photo: (
-                self._pexels_relevance(photo, plan),
-                int(photo.get("height", 0) or 0),
-            ),
-            reverse=True,
-        )
-        best = ranked[0]
-        score = self._pexels_relevance(best, plan)
-        if score < 1:
-            raise RuntimeError(f"Pexels results had low relevance for {plan.category}")
-        photo_id = int(best.get("id", 0) or 0)
-        if photo_id:
-            self._used_pexels_ids.add(photo_id)
-        src = best.get("src", {})
-        image_url = src.get("portrait") or src.get("large2x") or src.get("large") or src.get("original")
-        if not image_url:
-            raise RuntimeError("Pexels result had no downloadable image")
-        image_response = requests.get(image_url, timeout=self.settings.request_timeout_seconds)
-        image_response.raise_for_status()
-        output_path.write_bytes(image_response.content)
-        return output_path
-
-    def _pexels_relevance(self, photo: dict, plan: VisualPlan) -> int:
-        text = " ".join(
-            [
-                str(photo.get("alt", "")),
-                str(photo.get("photographer", "")),
-            ]
-        ).lower()
-        category_terms = [plan.category, *plan.keywords[:6]]
-        return sum(1 for term in category_terms if term.lower() in text)
-
     def _pollinations_image(self, prompt: str, output_path: Path) -> Path:
         encoded_prompt = urllib.parse.quote(self._vertical_prompt(prompt))
         seed = random.randint(1, 999999)
@@ -294,7 +426,7 @@ class ImageService:
         output_path.write_bytes(response.content)
         return output_path
 
-    def _local_fallback_image(self, segment: Segment, plan: VisualPlan, output_path: Path) -> Path:
+    def _local_fallback_image(self, segment: Segment, plan: VisualPlan, output_path: Path, attempt: int = 0) -> Path:
         width, height = self.settings.video_resolution
         palettes = {
             "everyday_science": ((14, 16, 18), (48, 52, 56), (255, 210, 72)),
@@ -315,7 +447,7 @@ class ImageService:
             color = tuple(int(top[i] + (bottom[i] - top[i]) * ratio) for i in range(3))
             draw.line([(0, y), (width, y)], fill=(*color, 255))
 
-        random.seed(f"{plan.cache_key()}|{segment.text}")
+        random.seed(f"{plan.cache_key()}|{segment.text}|{output_path.name}|{attempt}")
         self._draw_category_subject(draw, plan.category, width, height, accent)
         self._draw_particles(draw, plan.category, width, height, accent)
 
@@ -332,7 +464,6 @@ class ImageService:
         glow = glow.filter(ImageFilter.GaussianBlur(38))
         image = Image.alpha_composite(image.convert("RGBA"), glow).convert("RGB")
         image.save(output_path, quality=92)
-        return output_path
 
     def _draw_category_subject(
         self,

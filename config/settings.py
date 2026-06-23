@@ -200,9 +200,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     client_secrets_file = _path_env("YOUTUBE_CLIENT_SECRETS_FILE", base_dir, "storage/credentials/client_secret.json")
     token_file = _path_env("YOUTUBE_TOKEN_FILE", base_dir, "storage/credentials/youtube_token.json")
     cloud_runtime = _is_cloud_runtime()
-    default_width = 720 if cloud_runtime else 1080
-    default_height = 1280 if cloud_runtime else 1920
-    default_fps = 20 if cloud_runtime else 24
+    default_width = 540 if cloud_runtime else 1080
+    default_height = 960 if cloud_runtime else 1920
+    default_fps = 15 if cloud_runtime else 24
     default_preset = "ultrafast" if cloud_runtime else "veryfast"
 
     settings = Settings(

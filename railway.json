@@ -4,7 +4,7 @@
     "builder": "DOCKERFILE"
   },
   "deploy": {
-    "startCommand": "python main.py",
-    "restartPolicyType": "NEVER"
+    "startCommand": "python main.py --schedule",
+    "restartPolicyType": "ON_FAILURE"
   }
 }

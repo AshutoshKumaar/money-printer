@@ -16,4 +16,4 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
-CMD ["python", "main.py"]
+CMD ["python", "main.py", "--schedule"]

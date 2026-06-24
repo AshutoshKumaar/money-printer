@@ -75,9 +75,12 @@ class ShortsPipeline:
             self.logger.info("Dry run complete. Metadata saved at %s", paths.metadata_path)
             return GeneratedVideo(topic, script, None, paths.metadata_path)
 
-        image_paths = self.images.generate_images(script, paths, use_existing=use_existing_assets)
+        image_paths = self.images.generate_images(script, paths, use_existing=use_existing_assets, gemini_service=self.gemini)
         audio_paths = self.voice.generate_voiceovers(script, paths, use_existing=use_existing_assets)
         video_path = self.video.render(script, image_paths, audio_paths, paths)
+        
+        # Clean up temporary scene images and fallback files after successful render (Requirement 2)
+        self.images.delete_fallback_cache(paths)
 
         youtube_url = None
         if not generate_only:

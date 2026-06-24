@@ -35,15 +35,42 @@ class ImageService:
         self._used_pexels_ids: set[int] = set()
         self.settings.visual_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate_images(self, script: Script, paths: RunPaths, use_existing: bool = False) -> list[Path]:
+    def generate_images(
+        self,
+        script: Script,
+        paths: RunPaths,
+        use_existing: bool = False,
+        gemini_service: Any = None
+    ) -> list[Path]:
         self._used_image_digests.clear()
         self._used_pexels_ids.clear()
+        
+        # 1. Build and verify visual plans
+        plans = [self.matcher.plan(segment, script.topic) for segment in script.segments]
+        categories = [p.category for p in plans]
+        category_diversity = (len(set(categories)) / len(plans)) * 100.0 if plans else 100.0
+        
+        # If category diversity < 70%, regenerate visual plan (Requirement 7)
+        attempts = 0
+        while category_diversity < 70.0 and gemini_service is not None and attempts < 2:
+            self.logger.warning("Category diversity score is %.1f%% (<70%%). Regenerating visual plan...", category_diversity)
+            script = gemini_service.diversify_visual_plans(script)
+            # Rebuild plans and recalculate
+            plans = [self.matcher.plan(segment, script.topic) for segment in script.segments]
+            categories = [p.category for p in plans]
+            category_diversity = (len(set(categories)) / len(plans)) * 100.0 if plans else 100.0
+            attempts += 1
+
         image_paths: list[Path] = []
         visual_manifest: list[dict] = []
 
+        # Running lists for diversity tracking (Requirement 6)
+        selected_categories: list[str] = []
+        selected_queries: list[str] = []
+
         for index, segment in enumerate(script.segments, start=1):
             output_path = paths.image_dir / f"scene_{index:02d}.jpg"
-            plan = self.matcher.plan(segment, script.topic)
+            plan = plans[index - 1]
             
             selected_path, provider, confidence, selected_id, selected_url, used_query = self._select_visual(
                 index,
@@ -54,17 +81,23 @@ class ImageService:
                 use_existing=use_existing,
             )
             
-            # Post-selection diversity score for logging
-            diversity_score = self._calculate_diversity_score(index)
+            # Track selected category and query
+            selected_categories.append(plan.category)
+            selected_queries.append(used_query)
+            
+            # Calculate running diversity scores (Requirement 6)
+            cat_div = (len(set(selected_categories)) / index) * 100.0
+            query_div = (len(set(selected_queries)) / index) * 100.0
+            image_div = (len(self._used_image_digests) / index) * 100.0
             
             # Log required by the user (Requirement 8)
             self.logger.info("--- Visual Diversity Log ---")
-            self.logger.info("Scene Number: %s", index)
-            self.logger.info("Query: %s", used_query)
-            self.logger.info("Selected Image ID: %s", selected_id)
-            self.logger.info("Selected Image URL: %s", selected_url)
-            self.logger.info("Source (Pexels/Fallback): %s", "Pexels" if provider == "pexels" else "Fallback")
-            self.logger.info("Visual Diversity Score: %.1f%%", diversity_score)
+            self.logger.info("Scene Category: %s", plan.category)
+            self.logger.info("Visual Concept: %s", plan.concept)
+            self.logger.info("Generated Query: %s", used_query)
+            self.logger.info("Image Source: %s", "Pexels" if provider == "pexels" else "Fallback")
+            self.logger.info("Diversity Score: Category=%.1f%%, Query=%.1f%%, Image=%.1f%%", 
+                             cat_div, query_div, image_div)
             self.logger.info("----------------------------")
             
             segment.visual_category = plan.category
@@ -81,7 +114,11 @@ class ImageService:
                     "selected_id": selected_id,
                     "selected_url": selected_url,
                     "visual_plan": plan.to_dict(),
-                    "diversity_score": diversity_score,
+                    "diversity_score": {
+                        "category": cat_div,
+                        "query": query_div,
+                        "image": image_div
+                    },
                 }
             )
 
@@ -572,3 +609,13 @@ class ImageService:
             return False
         self._used_image_digests.add(digest)
         return True
+
+    def delete_fallback_cache(self, paths: RunPaths | None = None) -> None:
+        """Deletes any cached fallback images to ensure they are never reused across videos."""
+        self.logger.info("Cleaning up visual fallback cache and temporary files...")
+        if paths and paths.image_dir.exists():
+            try:
+                shutil.rmtree(paths.image_dir)
+                self.logger.info("Successfully deleted temporary scene images folder: %s", paths.image_dir)
+            except Exception as e:
+                self.logger.warning("Could not delete temporary image folder %s: %s", paths.image_dir, e)

@@ -17,9 +17,10 @@ class VisualPlan:
     prompt: str
     confidence: float
     reason: str
+    concept: str = ""
 
     def cache_key(self) -> str:
-        payload = "|".join([self.category, self.query, self.prompt])
+        payload = "|".join([self.category, self.query, self.prompt, self.concept])
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
 
     def to_dict(self) -> dict:
@@ -119,19 +120,60 @@ class VisualMatcher:
                 topic,
             ]
         ).lower()
-        category_scores = self._score_categories(context_text)
-        category, score = max(category_scores.items(), key=lambda item: item[1])
-        if score == 0:
-            category = self._topic_category(topic)
-            score = 1
+        
+        # 1. Determine Category
+        category = segment.visual_category.strip().lower()
+        if category in self.CATEGORY_RULES:
+            score = 5
+        else:
+            category_scores = self._score_categories(context_text)
+            category, score = max(category_scores.items(), key=lambda item: item[1])
+            if score == 0:
+                category = self._topic_category(topic)
+                score = 1
 
         keywords = self._extract_keywords(context_text)
+        
+        # 2. Determine scene-specific Query
+        raw_query = segment.search_query.strip()
+        cleaned_query = self._clean_query_from_generic(raw_query)
+        
+        if cleaned_query and len(cleaned_query.split()) >= 2:
+            query_terms = cleaned_query
+        else:
+            # Fallback to English keywords + category
+            english_keywords = [item for item in keywords if re.fullmatch(r"[a-zA-Z0-9-]+", item)]
+            query_terms = " ".join(english_keywords[:5] + [category]).strip()
+            
         rule = self.CATEGORY_RULES[category]
-        query_terms = self._query_terms(keywords, str(rule["query"]))
         prompt = self._prompt(segment, topic, category, keywords, str(rule["prompt"]))
         confidence = self._confidence(category, score, keywords, segment)
-        reason = f"matched {category} with score {score} from narration/prompt keywords"
-        return VisualPlan(category, keywords, query_terms, prompt, confidence, reason)
+        reason = f"matched {category} (Gemini set: {bool(segment.visual_category)}) with score {score}"
+        
+        # 3. Use segment visual concept
+        concept = segment.visual_concept.strip() or f"Visual for {category}"
+        
+        return VisualPlan(
+            category=category,
+            keywords=keywords,
+            query=query_terms,
+            prompt=prompt,
+            confidence=confidence,
+            reason=reason,
+            concept=concept
+        )
+
+    def _clean_query_from_generic(self, query: str) -> str:
+        words = re.findall(r"[a-zA-Z0-9-]+", query)
+        generic_words = {
+            "everyday", "science", "object", "close", "up", "close-up", "physics", "experiment", "room",
+            "documentary", "cinematic", "silhouette", "explainer", "person", "man", "woman", "studio",
+            "lighting", "concept", "background", "photo", "stock", "image", "video", "footage", "clip",
+            "representation", "atmosphere", "mysterious", "dark", "dramatic", "realistic", "high",
+            "contrast", "sharp", "subject", "composition", "vertical", "portrait"
+        }
+        clean = [w for w in words if w.lower() not in generic_words]
+        return " ".join(clean)
 
     def _score_categories(self, text: str) -> dict[str, int]:
         scores: dict[str, int] = {}

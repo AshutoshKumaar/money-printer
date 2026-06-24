@@ -15,6 +15,7 @@ class Segment:
     search_query: str = ""
     visual_type: str = "ai_image"
     visual_category: str = ""
+    visual_concept: str = ""
     visual_provider: str = ""
     visual_confidence: float = 0.0
 
@@ -33,6 +34,7 @@ class Segment:
             search_query=str(data.get("search_query", f"{topic} cinematic vertical")).strip(),
             visual_type="ai_image",
             visual_category=str(data.get("visual_category", "")).strip(),
+            visual_concept=str(data.get("visual_concept", "")).strip(),
             visual_provider=str(data.get("visual_provider", "")).strip(),
             visual_confidence=float(data.get("visual_confidence", 0.0) or 0.0),
         )

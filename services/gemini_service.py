@@ -263,6 +263,7 @@ class GeminiService:
         - Every scene needs a vertical 9:16 cinematic "image_prompt".
         - Story should build curiosity and reveal information step by step.
         - End with a short CTA to follow/subscribe/comment.
+        - Ensure every scene represents a completely different visual concept and category to maximize visual diversity.
         - Return JSON only.
 
         Schema:
@@ -276,7 +277,9 @@ class GeminiService:
               "text": "spoken Hindi line",
               "subtitle": "Roman Hindi subtitle",
               "visual_type": "ai_image",
-              "search_query": "optional stock fallback query",
+              "visual_category": "space / technology / nature / everyday_science / history / horror / person / ocean",
+              "visual_concept": "concrete visual concept description (e.g. astronaut floating over earth)",
+              "search_query": "concrete visual description query (3-5 words in English, e.g. bubbling chemistry beaker close up). Do NOT use generic words like everyday science, object close up, person documentary, etc.",
               "image_prompt": "vertical 9:16 cinematic realistic prompt"
             }}
           ]
@@ -340,3 +343,57 @@ class GeminiService:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
         return text
+
+    def diversify_visual_plans(self, script: Script) -> Script:
+        self.logger.info("Category diversity <70%%. Calling Gemini to diversify visual plans...")
+        prompt = f"""
+        The following Hindi Shorts script has low visual category diversity. 
+        Please assign a unique visual category, a completely different visual concept, and a concrete, scene-specific English search query to each scene to maximize visual diversity.
+        Make sure the categories chosen are as diverse as possible (aim for at least 70% unique categories across the scenes, selected from: space, technology, nature, everyday_science, history, horror, person, ocean).
+        Ensure every scene represents a different visual concept.
+        
+        Return the updated segments in JSON format. Keep the spoken "text" and "subtitle" EXACTLY as they are.
+        
+        Script:
+        {json.dumps(script.to_dict(), ensure_ascii=False)}
+        
+        Schema to return:
+        {{
+          "segments": [
+            {{
+              "text": "spoken Hindi line (DO NOT MODIFY)",
+              "subtitle": "Roman Hindi subtitle (DO NOT MODIFY)",
+              "visual_type": "ai_image",
+              "visual_category": "space / technology / nature / everyday_science / history / horror / person / ocean",
+              "visual_concept": "concrete visual concept",
+              "search_query": "concrete visual description query (3-5 words in English)",
+              "image_prompt": "vertical 9:16 cinematic realistic prompt"
+            }}
+          ]
+        }}
+        """
+        try:
+            response = retry_call(
+                lambda: self.client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                ),
+                attempts=self.settings.retry_attempts,
+                backoff_seconds=self.settings.retry_backoff_seconds,
+                logger=self.logger,
+                label="Gemini script visual diversification",
+            )
+            data = json.loads(self._clean_json_text(response.text or ""))
+            raw_segments = data.get("segments", [])
+            if len(raw_segments) == len(script.segments):
+                for index, seg_data in enumerate(raw_segments):
+                    target_seg = script.segments[index]
+                    target_seg.visual_category = str(seg_data.get("visual_category", target_seg.visual_category)).strip()
+                    target_seg.visual_concept = str(seg_data.get("visual_concept", target_seg.visual_concept)).strip()
+                    target_seg.search_query = str(seg_data.get("search_query", target_seg.search_query)).strip()
+                    target_seg.image_prompt = str(seg_data.get("image_prompt", target_seg.image_prompt)).strip()
+                self.logger.info("Successfully diversified script visual plans via Gemini")
+        except Exception as exc:
+            self.logger.warning("Failed to diversify visual plans: %s", exc)
+        return script

@@ -30,3 +30,13 @@ videos/
 output_*.jpg
 video_metadata.json
 temp-audio.m4a
+
+# Runtime logs, caches, and database state
+storage/debug/
+storage/caption_cache/
+storage/last_music.txt
+storage/scheduler_state.json
+storage/upload_history.json
+storage/scheduler_log.json
+storage/failed_uploads.json
+

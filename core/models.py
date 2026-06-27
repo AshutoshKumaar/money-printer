@@ -106,3 +106,109 @@ class GeneratedVideo:
             "youtube_url": self.youtube_url,
             "script": self.script.to_dict(),
         }
+
+
+@dataclass(slots=True)
+class TopicContext:
+    run_id: str
+    topic: str
+    history_excludes: list[str]
+
+
+@dataclass(slots=True)
+class ResearchContext:
+    run_id: str
+    topic: str
+    raw_facts: list[dict]
+
+
+@dataclass(slots=True)
+class VerificationReport:
+    run_id: str
+    facts_verified: bool
+    verified_records: list[dict]
+
+
+@dataclass(slots=True)
+class NarrativeScript:
+    run_id: str
+    hook: str
+    cta: str
+    segments: list[dict]
+
+
+@dataclass(slots=True)
+class ScenePlanManifest:
+    run_id: str
+    scenes: list[dict]
+
+
+@dataclass(slots=True)
+class VisualAssetManifest:
+    run_id: str
+    assets: list[dict]
+
+
+@dataclass(slots=True)
+class VoiceAssetManifest:
+    run_id: str
+    voice_rate_configured: str
+    tempo_adjusted: bool
+    assets: list[dict]
+
+
+@dataclass(slots=True)
+class RenderProfile:
+    resolution: tuple[int, int]
+    fps: int
+    ffmpeg_preset: str
+    memory_limited: bool
+    current_used_mb: float
+    limit_mb: float | None
+
+
+@dataclass(slots=True)
+class RenderOutput:
+    run_id: str
+    video_path: Path
+    duration: float
+    render_fps: int
+    render_resolution: tuple[int, int]
+
+
+@dataclass(slots=True)
+class ThumbnailOutput:
+    run_id: str
+    thumbnail_path: Path
+    selected_keyframe: int
+    overlay_text: str
+
+
+@dataclass(slots=True)
+class SEOMetadata:
+    run_id: str
+    title: str
+    description: str
+    tags: list[str]
+    hashtags: list[str]
+
+
+@dataclass(slots=True)
+class UploadOutcome:
+    run_id: str
+    success: bool
+    youtube_url: str | None
+    video_id: str | None
+    privacy_status: str
+    uploaded_at_utc: str
+
+
+@dataclass(slots=True)
+class RunSummary:
+    run_id: str
+    topic: str
+    title: str
+    video_path: Path
+    youtube_url: str | None
+    metrics: dict
+

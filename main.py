@@ -6,7 +6,7 @@ from pathlib import Path
 
 from config import load_settings
 from core.logging import configure_logging
-from core.pipeline import ShortsPipeline
+from director import Director
 from scheduler.daily_scheduler import DailyScheduler
 
 
@@ -40,10 +40,9 @@ def main() -> int:
     try:
         needs_youtube = args.auth_only or args.upload_only or args.schedule or (not args.dry_run and not args.generate_only)
         settings.validate(require_youtube=needs_youtube)
-        pipeline = ShortsPipeline(settings, logger)
-        pipeline.validate_gemini_connectivity()
+        director = Director(settings, logger)
         if needs_youtube:
-            pipeline.validate_youtube_authentication()
+            director.pipeline.validate_youtube_authentication()
 
         if args.auth_only:
             print(f"YouTube authentication ready. Token path: {settings.youtube_token_file}")
@@ -51,23 +50,29 @@ def main() -> int:
 
         if args.schedule:
             scheduler = DailyScheduler(settings, logger)
-            scheduler.run_forever(pipeline.scheduled_job)
+            scheduler.run_forever(director.scheduled_job)
             return 0
 
         if args.upload_only:
             if not args.video_path or not args.metadata_path:
                 raise ValueError("--upload-only requires --video-path and --metadata-path")
-            url = pipeline.upload_existing(args.video_path, args.metadata_path, args.thumbnail_path)
+            url = director.execute_upload_only(args.video_path, args.metadata_path, args.thumbnail_path)
             print(f"Uploaded video URL: {url}")
             return 0
 
         topic = " ".join(args.topic).strip() or None
-        result = pipeline.run(
-            topic,
-            dry_run=args.dry_run,
-            generate_only=args.generate_only,
-            use_existing_assets=args.use_existing_assets,
-        )
+        if args.generate_only:
+            result = director.execute_generate_only(
+                topic,
+                use_existing_assets=args.use_existing_assets,
+            )
+        else:
+            result = director.execute_run(
+                topic,
+                dry_run=args.dry_run,
+                generate_only=args.generate_only,
+                use_existing_assets=args.use_existing_assets,
+            )
         print(f"Metadata saved at: {result.metadata_path}")
         if result.video_path:
             print(f"Final video saved at: {result.video_path}")

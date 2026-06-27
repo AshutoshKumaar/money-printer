@@ -15,6 +15,27 @@ from services.voice_service import VoiceService
 from services.youtube_service import YouTubeService
 from storage import StorageManager
 
+class ModularGeneratedVideo(GeneratedVideo):
+    __slots__ = ("timings",)
+
+    def __init__(
+        self,
+        topic: str,
+        script: Script,
+        video_path: Path | None,
+        metadata_path: Path,
+        thumbnail_path: Path | None = None,
+        youtube_url: str | None = None,
+        timings: dict | None = None,
+    ) -> None:
+        self.topic = topic
+        self.script = script
+        self.video_path = video_path
+        self.metadata_path = metadata_path
+        self.thumbnail_path = thumbnail_path
+        self.youtube_url = youtube_url
+        self.timings = timings or {}
+
 
 class ShortsPipeline:
     """Coordinates script, assets, render, metadata, and YouTube upload."""
@@ -98,6 +119,100 @@ class ShortsPipeline:
             {
                 "run_id": paths.run_id,
                 "topic": topic,
+                "title": script.title,
+                "video_path": str(video_path),
+                "metadata_path": str(paths.metadata_path),
+                "youtube_url": youtube_url,
+            }
+        )
+        self.notifications.send(
+            "Hindi Shorts automation succeeded",
+            f"Video: {video_path}" + (f"\nYouTube: {youtube_url}" if youtube_url else ""),
+            success=True,
+        )
+        return result
+
+    def run_modular(
+        self,
+        script: Script,
+        image_paths: list[Path],
+        paths: RunPaths,
+        *,
+        dry_run: bool = False,
+        generate_only: bool = False,
+        use_existing_assets: bool = False,
+    ) -> ModularGeneratedVideo:
+        self.logger.info("Running modular compilation pipeline...")
+        import time
+
+        self._save_metadata(paths.metadata_path, script, video_path=None, thumbnail_path=None, youtube_url=None)
+
+        if dry_run:
+            self.logger.info("Dry run complete. Metadata saved at %s", paths.metadata_path)
+            return ModularGeneratedVideo(
+                topic=script.topic,
+                script=script,
+                video_path=None,
+                metadata_path=paths.metadata_path,
+                thumbnail_path=None,
+                youtube_url=None,
+                timings={
+                    "voice_time": 0.0,
+                    "render_time": 0.0,
+                    "upload_time": 0.0,
+                }
+            )
+
+        # 1. Voice generation
+        t0 = time.time()
+        audio_paths = self.voice.generate_voiceovers(script, paths, use_existing=use_existing_assets)
+        voice_time = round(time.time() - t0, 2)
+        self.logger.info("Voice generation completed in %.2fs", voice_time)
+
+        # 2. Render final video
+        t0 = time.time()
+        video_path = self.video.render(script, image_paths, audio_paths, paths)
+        render_time = round(time.time() - t0, 2)
+        self.logger.info("Render completed in %.2fs", render_time)
+
+        # Clean up temporary scene images
+        self.images.delete_fallback_cache(paths)
+
+        # 3. Upload to YouTube
+        t0 = time.time()
+        youtube_url = None
+        if not generate_only:
+            youtube_url = self.youtube.upload(video_path, script, paths.thumbnail_path)
+        upload_time = round(time.time() - t0, 2)
+        if not generate_only:
+            self.logger.info("Upload completed in %.2fs", upload_time)
+
+        self._save_metadata(
+            paths.metadata_path,
+            script,
+            video_path=video_path,
+            thumbnail_path=paths.thumbnail_path,
+            youtube_url=youtube_url,
+        )
+
+        result = ModularGeneratedVideo(
+            topic=script.topic,
+            script=script,
+            video_path=video_path,
+            metadata_path=paths.metadata_path,
+            thumbnail_path=paths.thumbnail_path,
+            youtube_url=youtube_url,
+            timings={
+                "voice_time": voice_time,
+                "render_time": render_time,
+                "upload_time": upload_time,
+            }
+        )
+
+        self.storage.append_topic_history(
+            {
+                "run_id": paths.run_id,
+                "topic": script.topic,
                 "title": script.title,
                 "video_path": str(video_path),
                 "metadata_path": str(paths.metadata_path),

@@ -73,6 +73,12 @@ class Settings:
     pexels_max_results: int
     pollinations_base_url: str
     background_music_url: str | None
+    pipeline_debug_persist: bool
+    use_modular_pipeline: bool
+    enable_cost_optimization: bool
+    ai_image_limit_per_short: int
+    ai_image_limit_per_long: int
+    max_ai_percentage: float
 
     def ensure_directories(self) -> None:
         for folder in (
@@ -267,6 +273,12 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
             "BACKGROUND_MUSIC_URL",
             "https://www.chosic.com/wp-content/uploads/2022/10/Horror-Long-Version(chosic.com).mp3",
         ),
+        pipeline_debug_persist=_bool_env("PIPELINE_DEBUG_PERSIST", True),
+        use_modular_pipeline=_bool_env("USE_MODULAR_PIPELINE", True),
+        enable_cost_optimization=_bool_env("ENABLE_COST_OPTIMIZATION", True),
+        ai_image_limit_per_short=_int_env("AI_IMAGE_LIMIT_PER_SHORT", 5),
+        ai_image_limit_per_long=_int_env("AI_IMAGE_LIMIT_PER_LONG", 20),
+        max_ai_percentage=_float_env("MAX_AI_PERCENTAGE", 40.0),
     )
     settings.ensure_directories()
     return settings

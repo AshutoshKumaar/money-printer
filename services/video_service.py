@@ -166,6 +166,7 @@ class VideoService:
         scene_paths = []
         elapsed = 0.0
         max_seconds = self.settings.shorts_max_seconds
+        ass_lines = []
 
         try:
             # Initial memory check & startup quality adjustment
@@ -204,7 +205,10 @@ class VideoService:
                 self.logger.info("Scene render started: %s/%s (%.2fs)", index, len(script.segments), duration)
                 visual_clip = self._image_clip(image_paths[index - 1], duration, index)
                 overlays = self._caption_clips(segment, duration, elapsed, max_seconds)
-                composed = CompositeVideoClip([visual_clip, *overlays], size=self.settings.video_resolution, use_bgclip=True)
+                if overlays:
+                    composed = CompositeVideoClip([visual_clip, *overlays], size=self.settings.video_resolution, use_bgclip=True)
+                else:
+                    composed = visual_clip
                 composed = self._with_duration(composed, duration)
                 composed = self._with_audio(composed, audio_clip)
                 composed = self._apply_video_transitions(composed)
@@ -226,6 +230,21 @@ class VideoService:
                 
                 self.logger.info("Scene render completed: %s/%s", index, len(script.segments))
                 scene_paths.append(scene_path)
+
+                # Gather ASS captions for this segment
+                chunks = self.caption_service.chunks(segment.subtitle or segment.text)
+                if chunks:
+                    chunk_duration = duration / len(chunks)
+                    for chunk_idx, chunk in enumerate(chunks):
+                        start_time = chunk_idx * chunk_duration
+                        end_time = duration if chunk_idx == len(chunks) - 1 else (chunk_idx + 1) * chunk_duration
+                        
+                        start_global = elapsed + start_time
+                        end_global = elapsed + end_time
+                        
+                        dialogue_lines = self.caption_service.format_ass_dialogue(chunk, start_global, end_global)
+                        ass_lines.extend(dialogue_lines)
+
                 elapsed += duration
                 
                 # Log memory after each scene
@@ -233,6 +252,11 @@ class VideoService:
 
             if not scene_paths:
                 raise RuntimeError("No valid scenes were generated; cannot render video")
+
+            # Write ASS subtitle file
+            ass_path = temp_dir / "subtitles.ass"
+            ass_content = self.caption_service.generate_ass_header() + "\n".join(ass_lines)
+            ass_path.write_text(ass_content, encoding="utf-8")
 
             # Final concatenation using FFmpeg concat demuxer
             self.logger.info("Final merge started")
@@ -254,31 +278,104 @@ class VideoService:
             subprocess.run(concat_cmd, check=True, capture_output=True)
             
             # Mix background music
-            music_path = self.settings.audio_dir / "background_music.mp3"
-            if not music_path.exists() or music_path.stat().st_size == 0:
-                self._download_background_music(music_path)
+            import random
+            audio_dir = self.settings.audio_dir
+            music_candidates = []
+            if audio_dir.exists():
+                for p in audio_dir.iterdir():
+                    if p.is_file() and p.suffix.lower() in (".mp3", ".wav") and not p.name.lower().startswith("scene_"):
+                        music_candidates.append(p)
+            
+            # Don't Repeat Music: Load/Save history from storage/last_music.txt
+            last_music_path = self.settings.storage_dir / "last_music.txt"
+            last_music_name = ""
+            if last_music_path.exists():
+                try:
+                    last_music_name = last_music_path.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+            
+            filtered_candidates = [m for m in music_candidates if m.name != last_music_name]
+            if not filtered_candidates and music_candidates:
+                filtered_candidates = music_candidates
+            
+            # Select background music track
+            selected_music = None
+            if filtered_candidates:
+                selected_music = random.choice(filtered_candidates)
+            else:
+                default_music_path = audio_dir / "background_music.mp3"
+                if not default_music_path.exists() or default_music_path.stat().st_size == 0:
+                    self._download_background_music(default_music_path)
+                if default_music_path.exists() and default_music_path.stat().st_size > 0:
+                    selected_music = default_music_path
+            
+            if selected_music:
+                try:
+                    last_music_path.parent.mkdir(parents=True, exist_ok=True)
+                    last_music_path.write_text(selected_music.name, encoding="utf-8")
+                except Exception:
+                    pass
+                self.logger.info("Selected background music track: %s", selected_music.name)
+            else:
+                self.logger.warning("No background music track is available; proceeding with narration only")
                 
             final_video_path = paths.video_path
-            if music_path.exists() and music_path.stat().st_size > 0:
+            
+            # Formatting paths for FFmpeg subtitles filter on Windows
+            fonts_dir_str = str(Path(self.settings.base_dir) / "assets" / "fonts").replace("\\", "/")
+            ass_path_str = str(ass_path).replace("\\", "/")
+            escaped_ass_path = ass_path_str.replace(":", "\\:")
+            escaped_fonts_dir = fonts_dir_str.replace(":", "\\:")
+            
+            # Adaptive Fade In and Fade Out
+            total_duration = elapsed
+            fade_duration = min(2.0, total_duration * 0.05)
+            fade_out_start = total_duration - fade_duration
+            
+            if selected_music and selected_music.exists() and selected_music.stat().st_size > 0:
+                bgm_base_volume = max(0.35, self.settings.background_music_volume * 5.0)
+                filter_complex_str = (
+                    f"[0:a]volume={self.settings.voice_volume}[voice];"
+                    f"[1:a]volume={bgm_base_volume:.3f},"
+                    f"afade=t=in:ss=0:d={fade_duration:.3f},"
+                    f"afade=t=out:ss={fade_out_start:.3f}:d={fade_duration:.3f}[bg_music];"
+                    f"[bg_music][voice]sidechaincompress=threshold=0.15:ratio=4:attack=20:release=150[ducked_bg];"
+                    f"[voice][ducked_bg]amix=inputs=2:duration=first:normalize=0[mixed];"
+                    f"[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+                )
                 mix_cmd = [
                     "ffmpeg", "-y",
                     "-i", str(merged_raw_path),
-                    "-i", str(music_path),
-                    "-filter_complex",
-                    f"[0:a]volume={self.settings.voice_volume}[a0];"
-                    f"[1:a]volume={self.settings.background_music_volume}[a1];"
-                    "[a0][a1]amix=inputs=2:duration=first[aout]",
+                    "-stream_loop", "-1",
+                    "-i", str(selected_music),
+                    "-filter_complex", filter_complex_str,
+                    "-vf", f"subtitles='{escaped_ass_path}':fontsdir='{escaped_fonts_dir}'",
                     "-map", "0:v",
                     "-map", "[aout]",
-                    "-c:v", "copy",
+                    "-c:v", "libx264",
+                    "-preset", self.settings.ffmpeg_preset,
                     "-c:a", "aac",
                     str(final_video_path)
                 ]
-                self.logger.info("Running FFmpeg audio mix: %s", " ".join(mix_cmd))
+                self.logger.info("Running FFmpeg audio mix and burn subtitles: %s", " ".join(mix_cmd))
                 subprocess.run(mix_cmd, check=True, capture_output=True)
             else:
-                import shutil
-                shutil.copy2(merged_raw_path, final_video_path)
+                filter_complex_str = f"[0:a]volume={self.settings.voice_volume},loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+                mix_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(merged_raw_path),
+                    "-filter_complex", filter_complex_str,
+                    "-vf", f"subtitles='{escaped_ass_path}':fontsdir='{escaped_fonts_dir}'",
+                    "-map", "0:v",
+                    "-map", "[aout]",
+                    "-c:v", "libx264",
+                    "-preset", self.settings.ffmpeg_preset,
+                    "-c:a", "aac",
+                    str(final_video_path)
+                ]
+                self.logger.info("Running FFmpeg burn subtitles and normalize narration: %s", " ".join(mix_cmd))
+                subprocess.run(mix_cmd, check=True, capture_output=True)
                 
             self.logger.info("Final merge completed: %s", final_video_path)
 
@@ -297,18 +394,7 @@ class VideoService:
         return paths.video_path
 
     def _caption_clips(self, segment: Segment, duration: float, scene_start: float, total_seconds: float) -> list[ImageClip]:
-        chunks = self.caption_service.chunks(segment.subtitle or segment.text)
-        if not chunks:
-            return []
-        chunk_duration = duration / len(chunks)
-        overlays: list[ImageClip] = []
-        for index, caption in enumerate(chunks):
-            start = index * chunk_duration
-            end = duration if index == len(chunks) - 1 else (index + 1) * chunk_duration
-            overlay = self.caption_service.make_overlay(caption, scene_start + start, total_seconds)
-            clip = self._with_duration(ImageClip(overlay), max(0.1, end - start)).with_start(start)
-            overlays.append(clip)
-        return overlays
+        return []
 
     def _image_clip(self, image_path: Path, duration: float, index: int):
         target_size = self.settings.video_resolution

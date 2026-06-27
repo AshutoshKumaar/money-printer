@@ -24,15 +24,98 @@ class VoiceService:
         audio_paths: list[Path] = []
         for index, segment in enumerate(script.segments, start=1):
             audio_path = paths.audio_dir / f"scene_{index:02d}.mp3"
+            if not (segment.text or "").strip():
+                self.logger.info("Empty segment text for scene %s; generating silent audio clip using FFmpeg", index)
+                import subprocess
+                command = [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=24000:cl=mono",
+                    "-t",
+                    "1.0",
+                    "-acodec",
+                    "libmp3lame",
+                    str(audio_path),
+                ]
+                subprocess.run(command, check=True, capture_output=True)
+                audio_paths.append(audio_path)
+                from core.telemetry import telemetry_tracker
+                telemetry_tracker.record(
+                    stage="voice",
+                    provider="silent_fallback",
+                    model="silent",
+                    endpoint="ffmpeg_silent",
+                    attempt_number=1,
+                    retry_count=0,
+                    status_code=200,
+                    latency=0.01,
+                    response_size_bytes=audio_path.stat().st_size if audio_path.exists() else 0,
+                    scene_index=index,
+                )
+                continue
+
             if use_existing:
                 cached = self._cached_audio(index, audio_path)
                 if cached:
-                    self.logger.info("Using cached voiceover %s", cached)
+                    from core.telemetry import telemetry_tracker
+                    telemetry_tracker.record(
+                        stage="voice",
+                        provider="cache",
+                        model="cache",
+                        endpoint="cache",
+                        cache_hit=True,
+                        scene_index=index,
+                    )
                     audio_paths.append(cached)
                     continue
             self.logger.info("Generating voiceover %s/%s", index, len(script.segments))
+            
+            import time
+            from core.telemetry import telemetry_tracker
+            attempt_tracker = {"count": 0}
+
+            def run_voice_gen():
+                attempt_tracker["count"] += 1
+                t_start = time.time()
+                try:
+                    res = self._generate_one(segment.text, audio_path)
+                    latency = time.time() - t_start
+                    telemetry_tracker.record(
+                        stage="voice",
+                        provider="Microsoft",
+                        model=self.settings.voice_name,
+                        endpoint="EdgeTTS.synthesize",
+                        attempt_number=attempt_tracker["count"],
+                        retry_count=attempt_tracker["count"] - 1,
+                        status_code=200,
+                        latency=latency,
+                        response_size_bytes=res.stat().st_size if res.exists() else 0,
+                        scene_index=index,
+                    )
+                    return res
+                except Exception as e:
+                    latency = time.time() - t_start
+                    telemetry_tracker.record(
+                        stage="voice",
+                        provider="Microsoft",
+                        model=self.settings.voice_name,
+                        endpoint="EdgeTTS.synthesize",
+                        attempt_number=attempt_tracker["count"],
+                        retry_count=attempt_tracker["count"] - 1,
+                        status_code=500,
+                        latency=latency,
+                        scene_index=index,
+                    )
+                    raise e
+
             generated = retry_call(
-                lambda text=segment.text, path=audio_path: self._generate_one(text, path),
+                run_voice_gen,
                 attempts=self.settings.retry_attempts,
                 backoff_seconds=self.settings.retry_backoff_seconds,
                 logger=self.logger,

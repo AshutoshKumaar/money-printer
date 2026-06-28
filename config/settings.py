@@ -56,6 +56,10 @@ class Settings:
     ffmpeg_preset: str
     background_music_volume: float
     voice_volume: float
+    sidechain_threshold: float
+    sidechain_ratio: float
+    sidechain_attack: int
+    sidechain_release: int
     request_timeout_seconds: int
     retry_attempts: int
     retry_backoff_seconds: float
@@ -250,8 +254,12 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         caption_words_per_chunk=_int_env("CAPTION_WORDS_PER_CHUNK", 3),
         render_fps=_int_env("RENDER_FPS", default_fps),
         ffmpeg_preset=os.getenv("FFMPEG_PRESET", default_preset),
-        background_music_volume=_float_env("BACKGROUND_MUSIC_VOLUME", 0.065),
+        background_music_volume=_float_env("BACKGROUND_MUSIC_VOLUME", 0.10),
         voice_volume=_float_env("VOICE_VOLUME", 1.0),
+        sidechain_threshold=_float_env("SIDECHAIN_THRESHOLD", 0.25),
+        sidechain_ratio=_float_env("SIDECHAIN_RATIO", 2.0),
+        sidechain_attack=_int_env("SIDECHAIN_ATTACK", 20),
+        sidechain_release=_int_env("SIDECHAIN_RELEASE", 150),
         request_timeout_seconds=_int_env("REQUEST_TIMEOUT_SECONDS", 30),
         retry_attempts=_int_env("RETRY_ATTEMPTS", 3),
         retry_backoff_seconds=_float_env("RETRY_BACKOFF_SECONDS", 1.5),

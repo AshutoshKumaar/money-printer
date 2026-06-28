@@ -338,9 +338,12 @@ class VideoService:
                 filter_complex_str = (
                     f"[0:a]volume={self.settings.voice_volume},asplit=2[voice1][voice2];"
                     f"[1:a]volume={bgm_base_volume:.3f},"
-                    f"afade=t=in:ss=0:d={fade_duration:.3f},"
-                    f"afade=t=out:ss={fade_out_start:.3f}:d={fade_duration:.3f}[bg_music];"
-                    f"[bg_music][voice1]sidechaincompress=threshold=0.15:ratio=4:attack=20:release=150[ducked_bg];"
+                    f"afade=t=in:st=0:d={fade_duration:.3f},"
+                    f"afade=t=out:st={fade_out_start:.3f}:d={fade_duration:.3f}[bg_music];"
+                    f"[bg_music][voice1]sidechaincompress=threshold={self.settings.sidechain_threshold:.2f}:"
+                    f"ratio={self.settings.sidechain_ratio:.1f}:"
+                    f"attack={self.settings.sidechain_attack}:"
+                    f"release={self.settings.sidechain_release}[ducked_bg];"
                     f"[voice2][ducked_bg]amix=inputs=2:duration=first:normalize=0[mixed];"
                     f"[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
                 )

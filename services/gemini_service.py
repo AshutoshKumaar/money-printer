@@ -109,24 +109,26 @@ class GeminiService:
         
         Follow these strict guidelines:
         
+        * IMPORTANT: All metadata fields (Title, Description, Hashtags, and Tags) MUST be written in English only. The video voice narration may be in Hindi/Hinglish, but the YouTube metadata must be in English.
+        
         1. Title:
            - Must be curiosity-driven to achieve high Click-Through Rate (CTR).
            - Must be under 100 characters.
-           - Must use natural, engaging Hindi or Hinglish (e.g. "Space का ये रहस्य जानकर होश उड़ जाएंगे!").
+           - Must be written in natural, engaging English.
            - Avoid spammy clickbait.
            
         2. Description:
-           - Write 2 to 4 engaging, well-structured paragraphs explaining the topic.
-           - Integrate relevant keywords naturally to improve search rankings.
-           - Include a Call to Action (CTA) at the end (e.g. comment your thoughts, subscribe).
+           - Write 2 to 4 engaging, well-structured paragraphs in English explaining the topic.
+           - Integrate relevant English keywords naturally to improve search rankings.
+           - Include an English Call to Action (CTA) at the end (e.g. comment your thoughts, subscribe).
            - Do NOT mention AI, "Automated Video", or "automated short video" anywhere.
            
         3. Hashtags:
-           - Generate between 8 and 15 topic-specific hashtags.
+           - Generate between 8 and 15 topic-specific English hashtags.
            - Do NOT include generic-only hashtags. Ensure they are topic-specific.
            
         4. Tags:
-           - Generate between 15 and 25 highly searchable YouTube tags.
+           - Generate between 15 and 25 highly searchable English YouTube tags.
            - Base them on the topic, entities, key concepts, and user search intent.
            
         Return a JSON object only, matching the schema:
@@ -300,10 +302,11 @@ class GeminiService:
         - Ensure every scene represents a completely different visual concept and category to maximize visual diversity.
         
         YouTube SEO Guidelines:
-        - Title: Curiosity-driven, high CTR, under 100 characters, in natural Hindi/Hinglish. Avoid clickbait spam.
-        - Description: 2-4 engaging paragraphs explaining the topic naturally, keywords naturally integrated, and ending with CTA. Do NOT mention AI, "Automated Video", or "automated short video".
-        - Hashtags: 8-15 topic-specific hashtags. Avoid generic-only hashtags.
-        - Tags: 15-25 searchable YouTube tags based on topic, entities, key concepts, and search intent.
+        * IMPORTANT: All YouTube SEO metadata (title, description, hashtags, and tags) MUST be written in English only.
+        - Title: Curiosity-driven, high CTR, under 100 characters, in natural English. Avoid clickbait spam.
+        - Description: 2-4 engaging paragraphs in English explaining the topic naturally, keywords naturally integrated, and ending with CTA. Do NOT mention AI, "Automated Video", or "automated short video".
+        - Hashtags: 8-15 topic-specific English hashtags. Avoid generic-only hashtags.
+        - Tags: 15-25 searchable English YouTube tags based on topic, entities, key concepts, and search intent.
         
         Return JSON only.
 

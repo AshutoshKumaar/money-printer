@@ -118,6 +118,7 @@ class GeminiStoryProvider(BaseStoryProvider):
                 search_query=str(item.get("search_query", "")).strip(),
                 visual_concept=str(item.get("visual_concept", "")).strip(),
                 emotion_curve=make_emotion(item.get("emotion_curve", {})),
+                subtitle_text=str(item.get("subtitle_text", item.get("caption_hinglish", "")) or item.get("spoken_hindi", "")).strip(),
             )
 
         segments = [make_segment(item) for item in data.get("segments", []) if isinstance(item, dict)]
@@ -136,8 +137,13 @@ class GeminiStoryProvider(BaseStoryProvider):
                     search_query="social media call to action like subscribe button",
                     visual_concept="Clean call to action graphic",
                     emotion_curve=default_emotions,
+                    subtitle_text=str(data.get("cta_hinglish", "Like aur subscribe karein.")).strip(),
                 )
                 segments.append(cta_segment)
+
+        seo_data = data.get("seo", {})
+        if not isinstance(seo_data, dict):
+            seo_data = {}
 
         return NarrativeScript(
             hook=str(data.get("hook", "")).strip(),
@@ -149,6 +155,7 @@ class GeminiStoryProvider(BaseStoryProvider):
             estimated_words=int(data.get("estimated_words", 0) or 0),
             emotion_curve=make_emotion(data.get("emotion_curve", {})),
             retention_score=float(data.get("retention_score", 0.0) or 0.0),
+            seo=seo_data,
         )
 
     @staticmethod
@@ -193,6 +200,7 @@ class StoryEngine:
             search_query="cinematic horizontal background",
             visual_concept="mysterious motion background",
             emotion_curve=default_emotions,
+            subtitle_text="Adbhut tathyon ke liye video ko ant tak dekhein.",
         )
         cta_segment = StorySegment(
             index=2,
@@ -201,6 +209,7 @@ class StoryEngine:
             search_query="social media call to action like subscribe button",
             visual_concept="Clean call to action graphic",
             emotion_curve=default_emotions,
+            subtitle_text="Apni rai comment karein aur follow karein!",
         )
         return NarrativeScript(
             hook="रुकिए, क्या आप जानते हैं?",
@@ -212,4 +221,11 @@ class StoryEngine:
             estimated_words=20,
             emotion_curve=default_emotions,
             retention_score=0.5,
+            seo={
+                "title": "Interesting Hindi Facts - क्या आप जानते हैं?",
+                "description": "दुनिया के अनसुने रहस्य और अद्भुत फैक्ट्स जो आपको हैरान कर देंगे! और मजेदार फैक्ट्स के लिए सब्सक्राइब करें।",
+                "hashtags": ["Shorts", "HindiFacts", "AmazingFacts"],
+                "tags": ["shorts", "hindi", "facts", "mystery"]
+            }
         )
+

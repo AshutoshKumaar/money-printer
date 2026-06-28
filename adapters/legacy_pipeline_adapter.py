@@ -43,14 +43,14 @@ class LegacyPipelineAdapter:
             subtitle_text = ""
             if matched_segment:
                 spoken_text = (matched_segment.spoken_hindi or "").strip()
-                subtitle_text = spoken_text
+                subtitle_text = (getattr(matched_segment, "subtitle_text", "") or spoken_text).strip()
 
             if not spoken_text:
                 is_last_scene = (scene.scene_index >= len(narrative.segments))
                 if is_last_scene:
                     if scene.scene_index == len(scene_plan.scenes):
                         spoken_text = (narrative.cta or "लाइक और सब्सक्राइब करें।").strip()
-                        subtitle_text = spoken_text
+                        subtitle_text = "Like aur subscribe karein."
                     else:
                         spoken_text = ""
                         subtitle_text = ""
@@ -86,12 +86,19 @@ class LegacyPipelineAdapter:
                 )
             )
 
+        # Retrieve SEO metadata from narrative script
+        seo = getattr(narrative, "seo", {}) or {}
+        title = seo.get("title") or (topic + " - Hindi Shorts")
+        description = seo.get("description") or f"Automated Short video about {topic}. {narrative.context}"
+        tags = seo.get("tags") or ["shorts", "hindi", "facts", topic]
+        hashtags = seo.get("hashtags") or ["Shorts", "Hindi", "Facts"]
+
         # Construct legacy Script object
         return Script(
-            title=topic + " - Hindi Shorts",
-            description=f"Automated Short video about {topic}. {narrative.context}",
-            tags=["shorts", "hindi", "facts", topic],
-            hashtags=["Shorts", "Hindi", "Facts"],
+            title=title.strip(),
+            description=description.strip(),
+            tags=[str(t).strip() for t in tags if str(t).strip()],
+            hashtags=[str(ht).strip().lstrip("#") for ht in hashtags if str(ht).strip()],
             segments=legacy_segments,
             topic=topic,
         )

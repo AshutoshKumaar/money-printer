@@ -336,12 +336,12 @@ class VideoService:
             if selected_music and selected_music.exists() and selected_music.stat().st_size > 0:
                 bgm_base_volume = max(0.35, self.settings.background_music_volume * 5.0)
                 filter_complex_str = (
-                    f"[0:a]volume={self.settings.voice_volume}[voice];"
+                    f"[0:a]volume={self.settings.voice_volume},asplit=2[voice1][voice2];"
                     f"[1:a]volume={bgm_base_volume:.3f},"
                     f"afade=t=in:ss=0:d={fade_duration:.3f},"
                     f"afade=t=out:ss={fade_out_start:.3f}:d={fade_duration:.3f}[bg_music];"
-                    f"[bg_music][voice]sidechaincompress=threshold=0.15:ratio=4:attack=20:release=150[ducked_bg];"
-                    f"[voice][ducked_bg]amix=inputs=2:duration=first:normalize=0[mixed];"
+                    f"[bg_music][voice1]sidechaincompress=threshold=0.15:ratio=4:attack=20:release=150[ducked_bg];"
+                    f"[voice2][ducked_bg]amix=inputs=2:duration=first:normalize=0[mixed];"
                     f"[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
                 )
                 mix_cmd = [

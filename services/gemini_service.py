@@ -96,12 +96,46 @@ class GeminiService:
             self.logger.warning("Gemini quota exhausted; keeping fallback metadata")
             return script
 
+        script_text = "\n".join([seg.text for seg in script.segments])
         prompt = f"""
-        Improve YouTube publishing metadata for this Hindi Shorts topic: {script.topic}
-        Return JSON only with title, description, tags, hashtags.
-        Keep title under 95 characters. Description should include 3-6 hashtags.
+        You are a YouTube SEO Expert specialized in viral YouTube Shorts.
+        Improve the YouTube publishing metadata (Title, Description, Hashtags, and Tags) for a YouTube Short about the topic: "{script.topic}".
+        
+        Script content:
+        {script_text}
+        
         Existing metadata:
         {json.dumps(script.to_dict(), ensure_ascii=False)}
+        
+        Follow these strict guidelines:
+        
+        1. Title:
+           - Must be curiosity-driven to achieve high Click-Through Rate (CTR).
+           - Must be under 100 characters.
+           - Must use natural, engaging Hindi or Hinglish (e.g. "Space का ये रहस्य जानकर होश उड़ जाएंगे!").
+           - Avoid spammy clickbait.
+           
+        2. Description:
+           - Write 2 to 4 engaging, well-structured paragraphs explaining the topic.
+           - Integrate relevant keywords naturally to improve search rankings.
+           - Include a Call to Action (CTA) at the end (e.g. comment your thoughts, subscribe).
+           - Do NOT mention AI, "Automated Video", or "automated short video" anywhere.
+           
+        3. Hashtags:
+           - Generate between 8 and 15 topic-specific hashtags.
+           - Do NOT include generic-only hashtags. Ensure they are topic-specific.
+           
+        4. Tags:
+           - Generate between 15 and 25 highly searchable YouTube tags.
+           - Base them on the topic, entities, key concepts, and user search intent.
+           
+        Return a JSON object only, matching the schema:
+        {{
+          "title": "high CTR Title",
+          "description": "Engaging description paragraphs with naturally integrated keywords and CTA",
+          "hashtags": ["tag1", "tag2", ...],
+          "tags": ["tag1", "tag2", ...]
+        }}
         """
         try:
             response = retry_call(
@@ -249,7 +283,7 @@ class GeminiService:
 
     def _script_prompt(self, topic: str) -> str:
         return f"""
-        Create a professional Hindi YouTube Shorts script about: "{topic}".
+        Create a professional Hindi YouTube Shorts script about: "{topic}", along with YouTube SEO metadata.
 
         Requirements:
         - Target duration: 55 to 60 seconds.
@@ -259,27 +293,34 @@ class GeminiService:
         - Keep every scene concise so all scenes and the CTA fit in the final video.
         - First 3 seconds must be a very strong curiosity hook.
         - Use natural spoken Devanagari Hindi for "text".
-        - Use clean Hinglish/Roman Hindi for "subtitle".
+        - "subtitle" must be the exact phonetic transliteration of "text" in Roman Hindi (Hinglish), matching narration exactly word-for-word. No summarization, no keyword extraction, no paraphrasing. Max 2 lines.
         - Every scene needs a vertical 9:16 cinematic "image_prompt".
         - Story should build curiosity and reveal information step by step.
         - End with a short CTA to follow/subscribe/comment.
         - Ensure every scene represents a completely different visual concept and category to maximize visual diversity.
-        - Return JSON only.
+        
+        YouTube SEO Guidelines:
+        - Title: Curiosity-driven, high CTR, under 100 characters, in natural Hindi/Hinglish. Avoid clickbait spam.
+        - Description: 2-4 engaging paragraphs explaining the topic naturally, keywords naturally integrated, and ending with CTA. Do NOT mention AI, "Automated Video", or "automated short video".
+        - Hashtags: 8-15 topic-specific hashtags. Avoid generic-only hashtags.
+        - Tags: 15-25 searchable YouTube tags based on topic, entities, key concepts, and search intent.
+        
+        Return JSON only.
 
         Schema:
         {{
-          "title": "SEO friendly title",
-          "description": "YouTube description with hashtags",
-          "tags": ["shorts", "hindi", "facts"],
-          "hashtags": ["Shorts", "HindiFacts"],
+          "title": "high CTR Title",
+          "description": "YouTube description with hashtags and CTA",
+          "tags": ["tag1", "tag2", ...],
+          "hashtags": ["hashtag1", "hashtag2", ...],
           "segments": [
             {{
-              "text": "spoken Hindi line",
-              "subtitle": "Roman Hindi subtitle",
+              "text": "spoken Devanagari Hindi line",
+              "subtitle": "exact word-for-word Roman Hindi (Hinglish) transliteration of text",
               "visual_type": "ai_image",
               "visual_category": "space / technology / nature / everyday_science / history / horror / person / ocean",
               "visual_concept": "concrete visual concept description (e.g. astronaut floating over earth)",
-              "search_query": "concrete visual description query (3-5 words in English, e.g. bubbling chemistry beaker close up). Do NOT use generic words like everyday science, object close up, person documentary, etc.",
+              "search_query": "concrete visual description query (3-5 words in English)",
               "image_prompt": "vertical 9:16 cinematic realistic prompt"
             }}
           ]

@@ -13,11 +13,24 @@ from core.pipeline import ShortsPipeline, ModularGeneratedVideo
 
 # Modular engine imports
 from research.research_engine import ResearchEngine
+from research.models import ResearchPackageAdapter
 from verification.verification_engine import VerificationEngine
+from verification.models import VerificationAdapter
 from story.story_engine import StoryEngine
+from story.models import NarrativeAdapter
 from scene.scene_engine import ScenePlanner
+from scene.models import ScenePackageAdapter
 from visual.visual_engine import VisualEngine
+from visual.models import VisualPackageAdapter
 from adapters.legacy_pipeline_adapter import LegacyPipelineAdapter
+
+# Topic Intelligence & Analytics imports
+from analytics.analytics_engine import AnalyticsEngine
+from analytics.feedback_engine import FeedbackEngine
+from topic.topic_history import TopicHistory
+from topic.category_manager import CategoryManager
+from topic.topic_engine import TopicEngine
+
 
 
 class Director:
@@ -50,11 +63,15 @@ class Director:
 
         self.logger.info("Director executing modular run flow...")
         
-        # Topic selection
-        recent_history = self.pipeline.storage.load_topic_history(limit=50)
-        recent_topics = [str(item.get("topic", "")).strip() for item in recent_history if item.get("topic")]
-        topic = topic or self.pipeline.gemini.generate_topic(recent_topics)
-        self.logger.info("Resolved Topic: %s", topic)
+        # Topic selection with Topic Intelligence
+        analytics_engine = AnalyticsEngine(self.settings, self.logger)
+        topic_history = TopicHistory(self.settings, self.logger, analytics_engine)
+        category_manager = CategoryManager(self.settings, self.logger)
+        topic_engine = TopicEngine(self.settings, self.logger, analytics_engine, topic_history, category_manager)
+        
+        topic_decision = topic_engine.decide_topic(topic)
+        topic = topic_decision.topic
+        self.logger.info("Resolved Topic: %s (Category: %s)", topic, topic_decision.category)
         
         paths = self.pipeline.storage.create_run(topic)
         
@@ -86,7 +103,7 @@ class Director:
             self.logger.info("Running stage: Verification")
             t_start = time.time()
             verification_engine = VerificationEngine(self.settings, self.logger)
-            verification_report = verification_engine.verify(research_context)
+            verification_report = verification_engine.verify(ResearchPackageAdapter(research_context))
             t_diff = round(time.time() - t_start, 2)
             timings["verification_time"] = t_diff
             partial_outputs["verification"] = verification_report.to_dict()
@@ -96,7 +113,7 @@ class Director:
             self.logger.info("Running stage: Story")
             t_start = time.time()
             story_engine = StoryEngine(self.settings, self.logger)
-            narrative_script = story_engine.write_story(verification_report)
+            narrative_script = story_engine.write_story(VerificationAdapter(verification_report))
             t_diff = round(time.time() - t_start, 2)
             timings["story_time"] = t_diff
             partial_outputs["story"] = narrative_script.to_dict()
@@ -106,28 +123,34 @@ class Director:
             self.logger.info("Running stage: Scene Planning")
             t_start = time.time()
             scene_planner = ScenePlanner(self.settings, self.logger)
-            scene_plan = scene_planner.plan(narrative_script)
+            scene_plan = scene_planner.plan(
+                NarrativeAdapter(narrative_script),
+                research=research_context,
+                verified=verification_report,
+            )
             t_diff = round(time.time() - t_start, 2)
             timings["scene_planning_time"] = t_diff
             partial_outputs["scene"] = scene_plan.to_dict()
             self._save_stage_json("scene.json", scene_plan.to_dict(), paths.run_id)
+            scene_plan_adapter = ScenePackageAdapter(scene_plan)
 
             # 5. Visual Asset Resolution Stage (Only runs if not dry_run)
             visual_assets = None
+            visual_package = None
             if not dry_run:
                 self.logger.info("Running stage: Visual")
                 t_start = time.time()
                 visual_engine = VisualEngine(self.settings, self.logger)
-                visual_assets = visual_engine.resolve_assets(scene_plan)
+                visual_package = visual_engine.resolve_assets(scene_plan_adapter)
+                visual_assets = VisualPackageAdapter(visual_package)
                 t_diff = round(time.time() - t_start, 2)
                 timings["visual_time"] = t_diff
                 
                 # Traceable visual asset records
                 trace_assets = []
-                for scene in scene_plan.scenes:
+                for scene in scene_plan_adapter.scenes:
                     asset = next((a for a in visual_assets.assets if a.scene_index == scene.scene_index), None)
                     if asset:
-                        # Reconstruct vertical Imagen prompt used
                         final_prompt = (
                             f"{scene.ai_image_prompt}. Vertical 9:16 composition, cinematic, realistic, high contrast, "
                             "sharp subject, no watermark, no subtitles, no UI text, photorealistic, "
@@ -146,10 +169,7 @@ class Director:
                             "file_path": asset.file_path,
                         })
                 
-                visual_payload = {
-                    "overall_style": scene_plan.overall_style,
-                    "assets": trace_assets
-                }
+                visual_payload = visual_package.to_dict()
                 partial_outputs["visual"] = visual_payload
                 self._save_stage_json("visual.json", visual_payload, paths.run_id)
             else:
@@ -158,8 +178,8 @@ class Director:
 
             # 6. Legacy Adapter Layer
             self.logger.info("Running stage: Legacy Adapter Mapping")
-            script = LegacyPipelineAdapter.adapt_script(topic, narrative_script, scene_plan, visual_assets)
-            image_paths = LegacyPipelineAdapter.extract_image_paths(scene_plan, visual_assets) if visual_assets else []
+            script = LegacyPipelineAdapter.adapt_script(topic, NarrativeAdapter(narrative_script), scene_plan_adapter, visual_assets)
+            image_paths = LegacyPipelineAdapter.extract_image_paths(scene_plan_adapter, visual_assets) if visual_assets else []
 
             # 7. Execute Voiceovers, Rendering, and Uploading via ShortsPipeline
             result = self.pipeline.run_modular(
@@ -169,6 +189,9 @@ class Director:
                 dry_run=dry_run,
                 generate_only=generate_only,
                 use_existing_assets=use_existing_assets,
+                narrative_package=narrative_script,
+                scene_package=scene_plan,
+                visual_package=visual_package,
             )
 
             # Extract pipeline execution times from run_modular timings dict
@@ -199,6 +222,18 @@ class Director:
                 "duration": float(getattr(self.pipeline.video, "last_rendered_duration", 0.0) or 0.0), # fallback metadata
             }
             self._save_stage_json("render.json", render_payload, paths.run_id)
+
+            # 8. Analytics Save Stage
+            self.logger.info("Running stage: Analytics Save")
+            t_start_save = time.time()
+            feedback_engine = FeedbackEngine(self.settings, self.logger)
+            feedback_engine.save_run_performance(result, topic_decision)
+            timings["analytics_save_time"] = round(time.time() - t_start_save, 2)
+
+            # Recalculate total time including analytics save stage
+            timings.pop("total_time", None)
+            total_time = round(sum(timings.values()), 2)
+            timings["total_time"] = total_time
 
             summary_payload = {
                 "topic": topic,
@@ -362,9 +397,14 @@ class Director:
 
             topic = None
             try:
-                recent_history = self.pipeline.storage.load_topic_history(limit=50)
-                recent_topics = [str(item.get("topic", "")).strip() for item in recent_history if item.get("topic")]
-                topic = self.pipeline.gemini.generate_topic(recent_topics)
+                # Topic selection with Topic Intelligence
+                analytics_engine = AnalyticsEngine(self.settings, self.logger)
+                topic_history = TopicHistory(self.settings, self.logger, analytics_engine)
+                category_manager = CategoryManager(self.settings, self.logger)
+                topic_engine = TopicEngine(self.settings, self.logger, analytics_engine, topic_history, category_manager)
+                
+                topic_decision = topic_engine.decide_topic(topic=None)
+                topic = topic_decision.topic
                 
                 # Check duplicate prevention
                 history_file = self.settings.storage_dir / "upload_history.json"

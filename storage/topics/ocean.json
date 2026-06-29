@@ -1,0 +1,28 @@
+{
+  "category": "ocean",
+  "is_evergreen": true,
+  "description": "mysteries and facts about deep ocean and marine life",
+  "templates": [
+    "3 Unsolved Mysteries of the Deep {subject}",
+    "The Strange Creature of {subject}",
+    "3 Historical Secrets Found In {subject}",
+    "Why {subject} Is the Most Dangerous Place on Earth"
+  ],
+  "subjects": [
+    "Mariana Trench",
+    "Deep Ocean",
+    "Bermuda Triangle",
+    "Sunken Shipwrecks",
+    "Giant Squid",
+    "Hydrothermal Vents",
+    "Great Barrier Reef Blue Holes",
+    "Lost City of Atlantis"
+  ],
+  "evergreen_topics": [
+    "3 Unsolved Mysteries of the Deep Ocean",
+    "3 Historical Secrets Found Underwater",
+    "The Strange Creature of Mariana Trench",
+    "Why Bermuda Triangle Is the Most Dangerous Place on Earth",
+    "3 Creepy Deep Sea Mysteries"
+  ]
+}

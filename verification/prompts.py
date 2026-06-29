@@ -1,64 +1,49 @@
 from __future__ import annotations
 
 VERIFICATION_PROMPT_TEMPLATE = """
-You are a professional fact-checker. Your job is to verify, correct, and evaluate all factual statements compiled on the topic: "{topic}".
+You are a professional fact-checker. Your job is to verify, assess, and evaluate all factual statements compiled on the topic: "{topic}".
 
 Research Context to Verify:
 Summary: {summary}
 Facts: {facts}
-Statistics: {statistics}
+Misconceptions: {myths}
 Timeline: {timeline}
-Myths: {myths}
-Controversies: {controversies}
 
 Instructions:
-- Verify every statement, check for exaggerations, contradictions, outdated claims, or unsupported statistics.
-- For each statement, determine its verification status: "verified", "partially_verified", "unverified", or "contradictory".
-- For statements that are "verified" or "partially_verified", provide a corrected/cleaned version, an explanation, a confidence score (0.0 to 1.0), an importance score (0.0 to 1.0), and a category.
-- If a statement is "unverified" or "contradictory", place it in the rejected list.
-- If a statement required significant corrections, place it in the corrected list.
-- Calculate an overall confidence score and a research quality score (0.0 to 1.0).
-- List any general warnings (e.g., conflicting accounts, outdated data found).
-- Do NOT generate script narration, storytelling, or clickbait.
-- Return a JSON object matching the schema below.
+1. Verify every statement individually. Do NOT rewrite the original fact. If clarification or corrections are needed, suggest them in `suggested_clarification` while keeping `original_fact` intact.
+2. Detect duplicate facts: do NOT remove them. Simply flag them with `is_duplicate: true`.
+3. Detect contradictions: if contradictory facts or conflicting evidence exist, preserve both viewpoints. Mark the status as "disputed", detail the disagreement in `contradictions_detected` and `reasoning`, and do NOT force a single conclusion unless the evidence clearly supports it.
+4. For each fact, determine its verification status: "verified", "partially_verified", "disputed", "insufficient_evidence", or "unverified".
+5. Evaluate `confidence_score` (0.0 to 1.0) and `importance_score` (0.0 to 1.0) for each statement.
+6. Provide a logical fact-checking explanation in `reasoning`.
+7. Categorize each record.
+8. Assess the overall `verification_quality_score` (0.0 to 1.0) for the research.
+9. List any warnings (e.g. conflicting accounts, critical omissions, or outdated data).
 
-JSON Schema:
+Respond ONLY with a JSON object matching this schema:
 {{
   "verified_facts": [
     {{
-      "original_fact": "Original claim text",
+      "fact": "Original claim text",
       "status": "verified",
-      "corrected_version": "Cleaned, precise claim text",
-      "confidence": 0.98,
-      "explanation": "Why it is verified, referencing established scientific/historical consensus",
+      "original_fact": "Original claim text",
+      "suggested_clarification": "Cleaned or corrected version if needed, else null",
+      "confidence_score": 0.98,
+      "reasoning": "Reasoning referencing consensus/sources",
+      "evidence_level": "strong",
+      "source_type": "scientific consensus",
+      "contradictions_detected": [],
+      "is_duplicate": false,
       "importance_score": 0.9,
-      "category": "science / history / statistics / etc."
+      "category": "science"
     }}
   ],
-  "rejected_facts": [
-    {{
-      "original_fact": "Original exaggerated or false claim text",
-      "status": "contradictory",
-      "corrected_version": "",
-      "confidence": 0.1,
-      "explanation": "Why this fact is rejected or contradictory",
-      "importance_score": 0.0,
-      "category": ""
-    }}
-  ],
-  "corrected_facts": [
-    {{
-      "original_fact": "Original partially correct claim text",
-      "status": "partially_verified",
-      "corrected_version": "Corrected and precise version",
-      "confidence": 0.75,
-      "explanation": "What was wrong or missing from the original claim",
-      "importance_score": 0.8,
-      "category": "history"
-    }}
-  ],
-  "warnings": ["Warning 1", "Warning 2"],
-  "confidence_score": 0.95,
-  "research_quality_score": 0.90
+  "verification_warnings": ["Warning 1", "Warning 2"],
+  "verification_quality_score": 0.90
 }}
+
+Constraints on Field Values:
+- "status": Must be one of: "verified", "partially_verified", "disputed", "insufficient_evidence", or "unverified".
+- "evidence_level": Must be one of: "strong", "moderate", or "weak".
+- "source_type": Must be one of: "scientific consensus", "historical consensus", "government publication", "academic journal", "encyclopedia", "first-hand account", "requires verification", or "unknown".
 """

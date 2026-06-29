@@ -1,0 +1,26 @@
+{
+  "category": "horror",
+  "is_evergreen": true,
+  "description": "creepy mystery and unsolved scary events",
+  "templates": [
+    "The Creepy Mystery of {subject}",
+    "3 Scariest Unsolved Crimes of {subject}",
+    "The Strange Legend of {subject}",
+    "3 Haunted Places That {subject}"
+  ],
+  "subjects": [
+    "Dyatlov Pass",
+    "Mary Celeste Ghost Ship",
+    "Roanoke Lost Colony",
+    "Winchester Mystery House",
+    "Aokigahara Forest Mysteries",
+    "Skinwalker Ranch Claims"
+  ],
+  "evergreen_topics": [
+    "The Dyatlov Pass Mystery",
+    "The Creepy Mystery of Mary Celeste Ghost Ship",
+    "The Strange Legend of Roanoke Lost Colony",
+    "3 Scariest Haunted Places in the World",
+    "The Unsolved Winchester House Mystery"
+  ]
+}

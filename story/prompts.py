@@ -1,76 +1,59 @@
 from __future__ import annotations
 
 STORY_PROMPT_TEMPLATE = """
-You are a professional YouTube Shorts Storyteller and Documentary Writer. 
-Your goal is to convert the following verified facts into a cinematic 55-58 second Hindi short video script, along with YouTube SEO metadata.
+You are a professional Narrative Designer. Your goal is to convert the following verified facts into a structured, highly engaging, and factual Short video script.
 
-Verified Facts to Use:
+Verified Facts to Use (with Fact IDs):
 {verified_facts}
 
-Core Instructions:
-- You must strictly use ONLY the verified facts provided above. Never invent facts, exaggerate statistics, or introduce unverified info.
-- Structure the script as follows:
-  1. Hook: 1-2 sentences. Instantly creates curiosity, no greetings (never say "Namaste", "Hey guys", etc.), captures attention in the first 3 seconds.
-  2. Context: Introduce the topic naturally.
-  3. Progressive Curiosity: Reveal details step-by-step, building tension.
-  4. Evidence: Introduce verified data or historical records naturally inside the narration.
-  5. Final Reveal: Place the strongest verified fact near the end as a shocking reveal.
-  6. Ending & CTA: Wrap up with a natural, brief CTA (e.g. comment your thoughts, follow for more).
-- Language Rules:
-  * Spoken narration (`spoken_hindi`) must be in natural, easy-to-understand Devanagari Hindi.
-  * Subtitle text (`subtitle_text`) must be the exact phonetic transliteration of `spoken_hindi` into Roman Hindi (Hinglish), word-for-word, matching the narration exactly. No summarization, no keyword extraction, no paraphrasing. Ensure it is readable, maximum 2 lines, and uses natural punctuation.
-  * Captions (`caption_keywords`) must be in pure Devanagari Hindi, containing 3-5 clean Devanagari visual keywords representing the segment (e.g., "रहस्य बर्फ मौत पहाड़"). Do NOT output Hinglish sentences, English words, punctuation, or full sentences.
-  * Search queries (`search_query`) must be in English keywords, useful for Pexels search.
-  * Visual concepts (`visual_concept`) must describe the scene composition.
-- Timing: Keep each scene short (9-12 words). Aim for a total of 10-12 scenes.
-- Assess the emotional weight (0.0 to 1.0) of each segment for: curiosity, fear, surprise, wonder, and urgency.
-- Return a JSON object matching the schema below.
+Narration Language: {language}
 
-YouTube SEO Guidelines:
-- SEO Title: Curiosity-driven, high CTR, under 100 characters, in natural Hindi/Hinglish. Avoid clickbait spam.
-- SEO Description: 2-4 engaging, well-structured paragraphs explaining the topic, integrating search keywords naturally, and ending with a Call to Action (CTA). Do NOT mention AI, "Automated Video", or "automated short video".
-- Hashtags: 8-15 topic-specific hashtags. Avoid generic-only hashtags.
-- Tags: 15-25 searchable YouTube tags based on topic, entities, key concepts, and search intent.
- 
-JSON Schema:
+Core Instructions:
+1. You must strictly use ONLY the verified facts provided above. Never invent facts, exaggerate statistics, or introduce unverified info.
+2. Structure the script into defined narrative phases:
+   - Hook: Instantly grabbing hook statement.
+   - Context: Introductory context of the topic.
+   - Escalation: Increasing curiosity and details.
+   - Climax: Peak explanation or reveal of the strongest fact.
+   - Ending: Natural wrapping thought or mystery.
+3. Every narration segment must introduce new information. No filler segments.
+4. Curiosity loops: Each narration segment must resolve the previous segment's curiosity while introducing a new curiosity.
+5. Pacing: Structure the narration segments so that the total estimated speaking duration is between 35 and 55 seconds.
+6. Language: Spoken narration must be written in natural, conversational {language}. Keep sentences short and optimized for spoken delivery.
+7. Link every narration segment to the relevant verified fact IDs that support it in `verified_fact_ids`. If a segment references uncertainty (e.g. disputed evidence), link it and maintain the uncertainty.
+
+Respond ONLY with a JSON object matching this schema:
 {{
-  "hook": "Instantly grabbing hook (Devanagari Hindi)",
-  "context": "Context statement (Devanagari Hindi)",
-  "ending": "Ending wrap up statement (Devanagari Hindi)",
-  "cta": "Call to action statement (Devanagari Hindi)",
-  "cta_hinglish": "Exact Roman Hindi (Hinglish) phonetic transliteration of the CTA statement",
-  "estimated_duration": 57.5,
-  "estimated_words": 115,
-  "emotion_curve": {{
-    "curiosity": 0.9,
-    "fear": 0.2,
-    "surprise": 0.6,
-    "wonder": 0.5,
-    "urgency": 0.7
-  }},
-  "retention_score": 0.92,
-  "seo": {{
-    "title": "curiosity-driven, high CTR YouTube title under 100 characters in Hindi/Hinglish",
-    "description": "2-4 paragraphs describing the topic naturally with keywords and CTA (no mention of AI/Automation)",
-    "hashtags": ["topic_hashtag1", "topic_hashtag2", "topic_hashtag3", "topic_hashtag4", "topic_hashtag5", "topic_hashtag6", "topic_hashtag7", "topic_hashtag8", "topic_hashtag9", "topic_hashtag10"],
-    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8", "tag9", "tag10", "tag11", "tag12", "tag13", "tag14", "tag15", "tag16", "tag17", "tag18"]
-  }},
-  "segments": [
+  "language": "{language}",
+  "hook": "Grabbing hook narration line",
+  "context": "Context narration line",
+  "escalation": "Escalation narrative line",
+  "climax": "Climax narrative line",
+  "ending": "Ending narrative line",
+  "narration_segments": [
     {{
       "index": 1,
-      "spoken_hindi": "spoken Devanagari line",
-      "subtitle_text": "Exact word-for-word Roman Hindi (Hinglish) transliteration of spoken_hindi",
-      "caption_keywords": "3-5 Devanagari Hindi visual keywords (no Hinglish, no punctuation, e.g., रहस्य बर्फ मौत पहाड़)",
-      "search_query": "English search query",
-      "visual_concept": "detailed scene visual description",
-      "emotion_curve": {{
-        "curiosity": 0.95,
-        "fear": 0.1,
-        "surprise": 0.7,
-        "wonder": 0.6,
-        "urgency": 0.4
-      }}
+      "narration_text": "Narration text in {language}",
+      "estimated_duration": 4.5,
+      "target_start": 0.0,
+      "target_end": 4.5,
+      "emotion": "curiosity",
+      "purpose": "Define the purpose/curiosity hook",
+      "verified_fact_ids": ["fact_id_1"],
+      "beat_type": "hook"
     }}
-  ]
+  ],
+  "quality": {{
+    "retention_score": 0.92,
+    "pacing_score": 0.88,
+    "curiosity_score": 0.95,
+    "clarity_score": 0.90,
+    "emotional_score": 0.85,
+    "estimated_retention_curve": [1.0, 0.95, 0.92, 0.89, 0.87, 0.85]
+  }}
 }}
+
+Constraints on Field Values:
+- "emotion": Must be one of: "curiosity", "suspense", "wonder", "surprise", "fear", "urgency", "neutral".
+- "beat_type": Must be one of: "hook", "question", "setup", "evidence", "twist", "reveal", "reflection", "cta".
 """

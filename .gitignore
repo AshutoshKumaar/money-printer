@@ -39,4 +39,6 @@ storage/scheduler_state.json
 storage/upload_history.json
 storage/scheduler_log.json
 storage/failed_uploads.json
+storage/analytics_history.json
+storage/learning_state.json
 

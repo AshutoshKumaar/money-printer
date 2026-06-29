@@ -1,0 +1,28 @@
+{
+  "category": "history",
+  "is_evergreen": true,
+  "description": "factual, neutral, educational history events and secrets",
+  "templates": [
+    "3 Secrets of the {subject}",
+    "3 Ancient Inventions of {subject} That Were Ahead of Their Time",
+    "The Mysterious Fall of {subject}",
+    "3 Lesser Known Facts About {subject}"
+  ],
+  "subjects": [
+    "Pyramids",
+    "Indus Valley Civilization",
+    "Ancient Rome",
+    "Great Wall of China",
+    "ISRO Early Rocketry Days",
+    "1911 Solar Eclipse Experiment",
+    "Mauryan Empire Architecture",
+    "Harappan City Planning"
+  ],
+  "evergreen_topics": [
+    "3 Ancient Inventions That Were Ahead of Their Time",
+    "3 Secrets of the Pyramids",
+    "The Mysterious Fall of Indus Valley Civilization",
+    "3 Lesser Known Facts About Ancient Rome",
+    "Early Days of Indian Space Research"
+  ]
+}

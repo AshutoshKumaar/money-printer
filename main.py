@@ -28,6 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--video-path", type=Path, help="Video path for --upload-only.")
     parser.add_argument("--metadata-path", type=Path, help="Metadata JSON path for --upload-only.")
     parser.add_argument("--thumbnail-path", type=Path, help="Optional thumbnail path for --upload-only.")
+    parser.add_argument("--sync-analytics", action="store_true", help="Synchronize YouTube analytics data to local database.")
+    parser.add_argument("--train", action="store_true", help="Run the Learning Engine to optimize planning weights.")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -38,7 +40,7 @@ def main() -> int:
     logger = configure_logging(settings.logs_dir, verbose=args.verbose)
 
     try:
-        needs_youtube = args.auth_only or args.upload_only or args.schedule or (not args.dry_run and not args.generate_only)
+        needs_youtube = args.auth_only or args.upload_only or args.schedule or args.sync_analytics or (not args.dry_run and not args.generate_only)
         settings.validate(require_youtube=needs_youtube)
         director = Director(settings, logger)
         if needs_youtube:
@@ -46,6 +48,23 @@ def main() -> int:
 
         if args.auth_only:
             print(f"YouTube authentication ready. Token path: {settings.youtube_token_file}")
+            return 0
+
+        if args.train:
+            from learning.learning_engine import LearningEngine
+            engine = LearningEngine(settings, logger)
+            state = engine.train()
+            print("Learning Engine optimization pass complete.")
+            print(f"Confidence score (overall): {state.confidence_scores.get('overall', 0.0):.2f}")
+            return 0
+
+        if args.sync_analytics:
+            import os
+            from analytics.importer import AnalyticsSyncService
+            sync_service = AnalyticsSyncService(settings, logger)
+            simulate = os.getenv("SIMULATE_UPLOAD", "").strip().lower() in ("1", "true", "yes", "on")
+            sync_count = sync_service.sync_all(simulate=simulate)
+            print(f"Synchronized performance metrics for {sync_count} videos.")
             return 0
 
         if args.schedule:

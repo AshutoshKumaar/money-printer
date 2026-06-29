@@ -1,59 +1,84 @@
 from __future__ import annotations
 
 SCENE_PLAN_PROMPT_TEMPLATE = """
-You are a professional Film Director and Director of Photography (DoP).
-Your job is to transform the following YouTube Shorts narrative script into a highly structured, production-ready cinematic Scene Plan.
+You are a professional cinematic Film Director. Your job is to transform a narrative script and its supporting research into a structured, production-ready Scene Package.
 
-Narrative Script:
-Hook: {hook}
-Context: {context}
-Segments:
-{segments}
-Ending: {ending}
-CTA: {cta}
+Input Data:
+
+1. Upstream Research Package (Entities & Visual Opportunities):
+{research_package}
+
+2. Upstream Verified Facts:
+{verified_facts}
+
+3. Upstream Narrative Package (Narration segments, timestamps, and fact IDs):
+{narrative_package}
 
 Core Instructions:
-- You must output exactly one scene shot per segment index in the "scenes" array. The length of the "scenes" array must be exactly equal to the number of segments in the Narrative Script. Do not generate multiple shots or multiple scene objects for the same segment index.
-- Plan each shot like a filmmaker. Do not write script narration or text; write visual cues and instructions.
-- Ensure visual uniqueness. Avoid generic prompts (like "person", "man", "woman", "nature"). Instead, write highly detailed, descriptive visual concepts.
-- Camera Motion examples: Slow Push, Slow Zoom, Handheld, Orbit, Dolly In, Dolly Out, Tilt, Pan, Crash Zoom, Static.
-- Camera Angle examples: Wide, Close Up, Extreme Close Up, Top Down, POV, Low Angle, High Angle.
-- Lens type examples: 35mm anamorphic, 85mm portrait, 24mm wide angle, macro lens, etc.
-- AI image prompts must describe a vertical 9:16 cinematic scene. Include lighting, color grading, atmosphere, composition. Specify "no text, no watermark, ultra realistic, movie quality, professional cinematography".
-- Stock search queries (stock_search_query) must be descriptive and context-specific English keywords directly relevant to the facts of that segment. Avoid generic filler queries like "nature", "person", "man", or "background".
-- Align transitions, lighting, music, and camera style to the segment's emotion.
-- Return a JSON object matching the schema below.
+1. For each narration segment in the Narrative Package, you must plan exactly one Scene.
+2. A Scene may contain one or more Shots. The sum of shot durations in a Scene MUST exactly equal the duration of that scene's narration segment (target_end - target_start).
+3. Map each Shot to verified entities (`verified_entity_ids`) and visual opportunities (`visual_opportunity_reference`) from the Research Package where possible.
+4. Select the most appropriate enums for each shot and overlay.
+5. Continuity: Assign a matching `continuity_group` name (e.g. "atlantis_underwater", "indus_valley_ruins") to Scenes that belong to the same visual sequence to preserve visual consistency.
+6. The Scene Planner does NOT generate images. Describe only what the Visual Engine should obtain or generate in `visual_goal`.
 
-JSON Schema:
+Respond ONLY with a JSON object matching this schema:
 {{
-  "overall_style": "High-level cinematic style description (e.g., neo-noir sci-fi, cinematic documentary)",
-  "scene_count": 12,
-  "estimated_runtime": 57.5,
   "scenes": [
     {{
-      "scene_index": 1,
-      "shot_index": 1,
-      "duration_seconds": 5.2,
-      "purpose": "Establish hook and curiosity",
-      "visual_description": "Detailed visual setup of the shot",
-      "camera_angle": "Wide / Close Up / POV / Low Angle / etc.",
-      "camera_motion": "Slow Push / Orbit / Dolly In / etc.",
-      "lens_type": "35mm anamorphic lens",
-      "lighting": "Dramatic chiaroscuro lighting, volumetric light rays",
-      "environment": "Misty dark forest / futuristic research laboratory / etc.",
-      "time_of_day": "Dusk / Night / Noon / Golden hour",
-      "color_palette": "Teal and orange / desaturated cool blues / vibrant amber",
-      "emotion": "curiosity / surprise / wonder / fear / urgency",
-      "transition_in": "Cut / Fade in / Whip pan / Cross dissolve",
-      "transition_out": "Cut / Fade out / Whip pan / Cross dissolve",
-      "caption_style": "Styled text instructions",
-      "stock_search_query": "English keywords optimized for stock image/video search (Pexels/Pixabay relevance)",
-      "ai_image_prompt": "vertical 9:16 cinematic prompt, movie quality, ultra realistic, professional cinematography, no text, no watermark",
-      "stock_video_query": "English keywords for stock video search",
-      "sound_effects": "Low hum, cinematic rise, whoosh transition",
-      "background_music_mood": "suspenseful / majestic / dramatic / upbeat",
-      "priority": 1
+      "scene_id": "scene_1",
+      "narration_segment_id": 1,
+      "target_start": 0.0,
+      "target_end": 4.5,
+      "visual_type": "stock_video",
+      "visual_priority": "high",
+      "transition": {{
+        "transition_type": "fade"
+      }},
+      "overlay": {{
+        "overlay_type": "text",
+        "text": "Text to display on screen",
+        "position": "center",
+        "style": "cinematic_bold",
+        "animation": "fade_in",
+        "duration": 4.5
+      }},
+      "continuity_group": "sequence_name",
+      "shots": [
+        {{
+          "shot_id": "shot_1_1",
+          "visual_goal": "A wide establishing shot of the ocean floor showing glowing ancient ruins.",
+          "camera_motion": {{
+            "motion_type": "zoom_in",
+            "speed": "slow"
+          }},
+          "duration": 4.5,
+          "transition_to_next": {{
+            "transition_type": "none"
+          }},
+          "visual_reference": "visual_opp_1",
+          "visual_source_strategy": "ai_preferred",
+          "shot_type": "establishing",
+          "aspect_ratio_hint": "9:16",
+          "safe_crop_region": null,
+          "focus_subject": "ruins"
+        }}
+      ]
     }}
-  ]
+  ],
+  "estimated_total_duration": 45.0,
+  "pacing_score": 0.90,
+  "visual_variety_score": 0.85
 }}
+
+Constraints on Field Values:
+- "visual_priority": Must be one of: "critical", "high", "medium", "low".
+- "visual_source_strategy" in shot: Must be one of: "stock_only", "ai_preferred", "ai_required", "archival", "map", "diagram", "hybrid".
+- "shot_type" in shot: Must be one of: "establishing", "close_up", "medium", "aerial", "macro", "diagram", "map", "archive", "reconstruction" (or null).
+- "camera_motion.motion_type": Must be one of: "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "tilt", "static".
+- "camera_motion.speed": Must be one of: "slow", "medium", "fast".
+- "transition_type" in transition/transition_to_next: Must be one of: "fade", "crossfade", "dissolve", "zoom", "wipe", "slide", "none".
+- "overlay.overlay_type": Must be one of: "text", "subtitle", "diagram", "map", "label", "none".
+- "overlay.position": Must be one of: "top", "center", "bottom".
+- "overlay.animation": Must be one of: "fade_in", "slide_in", "zoom_in", "typing", "none".
 """

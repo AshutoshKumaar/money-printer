@@ -27,6 +27,7 @@ from core.models import Script, Segment
 from core.retry import retry_call
 from services.caption_service import CaptionService
 from storage import RunPaths
+from render.models import RenderPackage
 
 
 def _get_container_memory() -> tuple[int, int | None, float]:
@@ -153,6 +154,7 @@ class VideoService:
         image_paths: list[Path],
         audio_paths: list[Path],
         paths: RunPaths,
+        render_package: RenderPackage | None = None,
     ) -> Path:
         self._create_thumbnail(image_paths, paths.thumbnail_path)
         
@@ -167,6 +169,12 @@ class VideoService:
         elapsed = 0.0
         max_seconds = self.settings.shorts_max_seconds
         ass_lines = []
+
+        if render_package:
+            # Load deterministic subtitles directly from the package
+            for sub in render_package.subtitles:
+                dialogue_lines = self.caption_service.format_ass_dialogue(sub.text, sub.start_time, sub.end_time)
+                ass_lines.extend(dialogue_lines)
 
         try:
             # Initial memory check & startup quality adjustment
@@ -203,7 +211,7 @@ class VideoService:
                     audio_clip = self._subclip(audio_clip, 0, duration)
 
                 self.logger.info("Scene render started: %s/%s (%.2fs)", index, len(script.segments), duration)
-                visual_clip = self._image_clip(image_paths[index - 1], duration, index)
+                visual_clip = self._image_clip(image_paths[index - 1], duration, index, render_package)
                 overlays = self._caption_clips(segment, duration, elapsed, max_seconds)
                 if overlays:
                     composed = CompositeVideoClip([visual_clip, *overlays], size=self.settings.video_resolution, use_bgclip=True)
@@ -232,18 +240,19 @@ class VideoService:
                 scene_paths.append(scene_path)
 
                 # Gather ASS captions for this segment
-                chunks = self.caption_service.chunks(segment.subtitle or segment.text)
-                if chunks:
-                    chunk_duration = duration / len(chunks)
-                    for chunk_idx, chunk in enumerate(chunks):
-                        start_time = chunk_idx * chunk_duration
-                        end_time = duration if chunk_idx == len(chunks) - 1 else (chunk_idx + 1) * chunk_duration
-                        
-                        start_global = elapsed + start_time
-                        end_global = elapsed + end_time
-                        
-                        dialogue_lines = self.caption_service.format_ass_dialogue(chunk, start_global, end_global)
-                        ass_lines.extend(dialogue_lines)
+                if not render_package:
+                    chunks = self.caption_service.chunks(segment.subtitle or segment.text)
+                    if chunks:
+                        chunk_duration = duration / len(chunks)
+                        for chunk_idx, chunk in enumerate(chunks):
+                            start_time = chunk_idx * chunk_duration
+                            end_time = duration if chunk_idx == len(chunks) - 1 else (chunk_idx + 1) * chunk_duration
+                            
+                            start_global = elapsed + start_time
+                            end_global = elapsed + end_time
+                            
+                            dialogue_lines = self.caption_service.format_ass_dialogue(chunk, start_global, end_global)
+                            ass_lines.extend(dialogue_lines)
 
                 elapsed += duration
                 
@@ -301,7 +310,10 @@ class VideoService:
             
             # Select background music track
             selected_music = None
-            if filtered_candidates:
+            bg_music_track = next((t for t in render_package.audio_tracks if t.track_type == "bg_music"), None) if render_package else None
+            if bg_music_track and Path(bg_music_track.file_path).exists():
+                selected_music = Path(bg_music_track.file_path)
+            elif filtered_candidates:
                 selected_music = random.choice(filtered_candidates)
             else:
                 default_music_path = audio_dir / "background_music.mp3"
@@ -399,17 +411,17 @@ class VideoService:
     def _caption_clips(self, segment: Segment, duration: float, scene_start: float, total_seconds: float) -> list[ImageClip]:
         return []
 
-    def _image_clip(self, image_path: Path, duration: float, index: int):
+    def _image_clip(self, image_path: Path, duration: float, index: int, render_package: RenderPackage | None = None):
         target_size = self.settings.video_resolution
         try:
             clip = self._with_duration(ImageClip(str(image_path)), duration)
             clip = self._resize_cover(clip, target_size)
-            return self._ken_burns(clip, duration, index, image_path)
+            return self._ken_burns(clip, duration, index, image_path, render_package)
         except Exception as exc:
             self.logger.warning("Could not load image %s: %s", image_path, exc)
             return self._with_duration(ColorClip(size=target_size, color=(12, 16, 22)), duration)
 
-    def _ken_burns(self, clip, duration: float, index: int, image_path: Path):
+    def _ken_burns(self, clip, duration: float, index: int, image_path: Path, render_package: RenderPackage | None = None):
         try:
             target_w, target_h = self.settings.video_resolution
             pan_left_to_right = index % 2 == 0
@@ -430,13 +442,17 @@ class VideoService:
 
             pre_w, pre_h = pre_scaled_cover.size # Exactly 1.1 * target_w and 1.1 * target_h
 
+            # Read Ken Burns zoom parameters from RenderPackage if present
+            zoom_start = 1.08 if index % 2 == 0 else 1.01
+            zoom_diff = -0.07 if index % 2 == 0 else 0.07
+            if render_package and index - 1 < len(render_package.clips):
+                c = render_package.clips[index - 1]
+                zoom_start = c.ken_burns_zoom_start
+                zoom_diff = c.ken_burns_zoom_end - c.ken_burns_zoom_start
+
             def transform(get_frame, t: float):
                 progress = min(1.0, max(0.0, float(t) / max(duration, 0.01)))
-                
-                # Zoom factor on the pre-scaled image
-                # At progress=0, crop a slightly larger box (zoom out)
-                # At progress=1, crop a slightly smaller box (zoom in)
-                zoom = 1.08 - (0.07 * progress) if index % 2 == 0 else 1.01 + (0.07 * progress)
+                zoom = zoom_start + (zoom_diff * progress)
                 
                 crop_w = int(target_w * zoom)
                 crop_h = int(target_h * zoom)

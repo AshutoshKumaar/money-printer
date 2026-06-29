@@ -1,0 +1,30 @@
+{
+  "category": "space",
+  "is_evergreen": true,
+  "description": "curiosity-driven space facts, cosmic mysteries, and astronomy secrets",
+  "templates": [
+    "3 Strange Facts About {subject}",
+    "The Mysterious Secret of {subject}",
+    "3 Mind Blowing Discoveries About {subject}",
+    "Why {subject} Could Destroy Our Galaxy"
+  ],
+  "subjects": [
+    "Black Holes",
+    "Neutron Stars",
+    "Mars Water Discoveries",
+    "Voyager 1 Signals",
+    "Dark Matter",
+    "Supernovas",
+    "Alien Exoplanets",
+    "The Oort Cloud",
+    "Solar Flares",
+    "Wormholes"
+  ],
+  "evergreen_topics": [
+    "3 Strange Facts About Black Holes",
+    "3 Creepy Space Signals Scientists Still Cannot Explain",
+    "The Mysterious Secret of Dark Matter",
+    "3 Mind Blowing Discoveries About Neutron Stars",
+    "Why Voyager 1 Signals Shocked Scientists"
+  ]
+}

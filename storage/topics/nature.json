@@ -1,0 +1,28 @@
+{
+  "category": "nature",
+  "is_evergreen": true,
+  "description": "dangerous animals and rare nature facts",
+  "templates": [
+    "3 Dangerous Animals With {subject}",
+    "The Unsolved Secret of {subject}",
+    "3 Rare Natural Phenomenons of {subject}",
+    "3 Deadliest Plants of {subject}"
+  ],
+  "subjects": [
+    "Secret Superpowers",
+    "Amazon Rainforest",
+    "Sahara Desert",
+    "Deep Cave Ecosystems",
+    "Carnivorous Plants",
+    "Deep Forest Predators",
+    "Volcanic Lightning",
+    "Migrating Animal Navigation"
+  ],
+  "evergreen_topics": [
+    "3 Dangerous Animals With Secret Superpowers",
+    "The Unsolved Secret of the Amazon Rainforest",
+    "3 Rare Natural Phenomenons in the World",
+    "3 Deadliest Plants You Should Avoid",
+    "How Animals Navigate Across Earth"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "category": "science",
+  "is_evergreen": true,
+  "description": "mind-blowing science and human brain facts",
+  "templates": [
+    "3 Mind Blowing Facts About the {subject}",
+    "The Science Behind {subject}",
+    "3 Mysterious Places Where {subject} Feels Broken",
+    "3 Future Technologies of {subject} That May Change Your Life"
+  ],
+  "subjects": [
+    "Human Brain",
+    "Quantum Entanglement",
+    "Gravity Anomalies",
+    "Artificial Intelligence",
+    "Nuclear Fusion",
+    "Time Dilation",
+    "Bioluminescence",
+    "Human DNA"
+  ],
+  "evergreen_topics": [
+    "3 Mind Blowing Facts About the Human Brain",
+    "3 Mysterious Places Where Gravity Feels Broken",
+    "3 Future Technologies That May Change Your Life",
+    "The Science Behind Quantum Entanglement",
+    "3 Strange Facts About Time Dilation"
+  ]
+}

@@ -6,6 +6,11 @@ from pathlib import Path
 
 from config import Settings
 from core.models import GeneratedVideo, Script
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from story.models import NarrativePackage
+    from scene.models import ScenePackage
+    from visual.models import VisualPackage
 from services.caption_service import CaptionService
 from services.gemini_service import GeminiService
 from services.image_service import ImageService
@@ -141,6 +146,9 @@ class ShortsPipeline:
         dry_run: bool = False,
         generate_only: bool = False,
         use_existing_assets: bool = False,
+        narrative_package: NarrativePackage | None = None,
+        scene_package: ScenePackage | None = None,
+        visual_package: VisualPackage | None = None,
     ) -> ModularGeneratedVideo:
         self.logger.info("Running modular compilation pipeline...")
         import time
@@ -171,7 +179,27 @@ class ShortsPipeline:
 
         # 2. Render final video
         t0 = time.time()
-        video_path = self.video.render(script, image_paths, audio_paths, paths)
+        render_package = None
+        if narrative_package and scene_package and visual_package:
+            from render.render_engine import RenderEngine
+            engine = RenderEngine(self.settings, self.logger)
+            render_package = engine.generate_package(
+                narrative_package,
+                scene_package,
+                visual_package,
+                [str(p) for p in audio_paths],
+            )
+            # Save RenderPackage to render.json for debug trace
+            self.logger.info("Saving deterministic RenderPackage specification to debug folder...")
+            debug_dir = self.settings.storage_dir / "debug" / paths.run_id
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                import json
+                (debug_dir / "render.json").write_text(json.dumps(render_package.to_dict(), indent=2), encoding="utf-8")
+            except Exception as exc:
+                self.logger.warning("Failed to save render.json: %s", exc)
+
+        video_path = self.video.render(script, image_paths, audio_paths, paths, render_package=render_package)
         render_time = round(time.time() - t0, 2)
         self.logger.info("Render completed in %.2fs", render_time)
 

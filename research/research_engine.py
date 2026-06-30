@@ -88,6 +88,8 @@ class GeminiResearchProvider(BaseResearchProvider):
                 self.validate_schema(data)
 
                 # Construct nested models
+                if attempt > 1:
+                    telemetry_tracker.retries["Gemini"]["recovered"] = True
                 return self.parse_package(topic, data)
 
             except Exception as exc:
@@ -105,6 +107,7 @@ class GeminiResearchProvider(BaseResearchProvider):
                 )
                 last_exception = exc
                 self.logger.warning("Research attempt %d failed: %s", attempt, exc)
+                telemetry_tracker.record_retry("Gemini", str(exc), recovered=False, fallback=False)
                 
                 if attempt < attempts:
                     # Enrich next attempt with correction feedback

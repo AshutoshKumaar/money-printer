@@ -125,6 +125,8 @@ class GeminiScenePlannerProvider(BaseScenePlannerProvider):
 
                 # Print success planning metrics
                 fixes = data.get("_normalization_fixes", 0)
+                if attempt > 1:
+                    telemetry_tracker.retries["Scene Planner"]["recovered"] = True
                 self.logger.info(
                     "\nScene Planner Metrics\n"
                     "---------------------\n"
@@ -153,6 +155,7 @@ class GeminiScenePlannerProvider(BaseScenePlannerProvider):
                 )
                 last_exception = exc
                 self.logger.warning("Scene planning attempt %d failed: %s", attempt, exc)
+                telemetry_tracker.record_retry("Scene Planner", str(exc), recovered=False, fallback=False)
                 
                 # Print failure metrics
                 fixes = data.get("_normalization_fixes", 0) if 'data' in locals() else 0

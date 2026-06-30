@@ -89,6 +89,8 @@ class GeminiStoryProvider(BaseStoryProvider):
                 self.validate_schema(data, package)
 
                 # Parse and return NarrativePackage
+                if attempt > 1:
+                    telemetry_tracker.retries["Gemini"]["recovered"] = True
                 return self.parse_narrative_package(data)
 
             except Exception as exc:
@@ -106,6 +108,7 @@ class GeminiStoryProvider(BaseStoryProvider):
                 )
                 last_exception = exc
                 self.logger.warning("Story writing attempt %d failed: %s", attempt, exc)
+                telemetry_tracker.record_retry("Gemini", str(exc), recovered=False, fallback=False)
                 
                 if attempt < attempts:
                     current_prompt = (

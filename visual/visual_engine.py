@@ -90,6 +90,7 @@ class VisualEngine:
                 t_start = time.time()
                 fallback_triggered = False
                 retry_count = 0
+                retry_occurred = False
 
                 # Generate clean cache key
                 search_query = shot.visual_reference or shot.visual_goal
@@ -124,6 +125,11 @@ class VisualEngine:
                     reasoning = f"Cache hit for key: '{cache_key}'"
                     used_paths.add(local_path)
                     self.logger.info("Shot %s: Cache hit! Reusing %s", shot.shot_id, cached_path)
+                    try:
+                        from core.telemetry import telemetry_tracker
+                        telemetry_tracker.record_fallback("cached_image")
+                    except Exception:
+                        pass
 
                 # 2. Evaluate Existing Generated Assets/Continuity Group Reuse (Second priority)
                 if not selected_source and scene.continuity_group != "default":
@@ -138,6 +144,11 @@ class VisualEngine:
                         reasoning = f"Reused asset from continuity group: '{scene.continuity_group}'"
                         used_paths.add(local_path)
                         self.logger.info("Shot %s: Continuity group '%s' reuse hit! Reusing %s", shot.shot_id, scene.continuity_group, local_path)
+                        try:
+                            from core.telemetry import telemetry_tracker
+                            telemetry_tracker.record_fallback("cached_image")
+                        except Exception:
+                            pass
 
                 # 3. Evaluate Stock Providers (Third priority)
                 if not selected_source:
@@ -171,6 +182,12 @@ class VisualEngine:
                                         output_path.unlink()
                         except Exception as e:
                             self.logger.warning("Shot %s: Stock provider failed: %s", shot.shot_id, e)
+                            try:
+                                from core.telemetry import telemetry_tracker
+                                telemetry_tracker.record_retry("Visual", str(e), recovered=False, fallback=False)
+                                retry_occurred = True
+                            except Exception:
+                                pass
 
                 # 4. Evaluate AI Image Generation (Fourth priority)
                 if not selected_source and ai_provider:
@@ -194,8 +211,21 @@ class VisualEngine:
                                 self.logger.warning("Shot %s: Rejecting low-quality AI asset", shot.shot_id)
                                 if output_path.exists():
                                     output_path.unlink()
+                        else:
+                            try:
+                                from core.telemetry import telemetry_tracker
+                                telemetry_tracker.record_retry("Visual", "AI provider returned no result", recovered=False, fallback=False)
+                                retry_occurred = True
+                            except Exception:
+                                pass
                     except Exception as e:
                         self.logger.warning("Shot %s: AI generation failed: %s", shot.shot_id, e)
+                        try:
+                            from core.telemetry import telemetry_tracker
+                            telemetry_tracker.record_retry("Visual", str(e), recovered=False, fallback=False)
+                            retry_occurred = True
+                        except Exception:
+                            pass
 
                 # 5. Placeholder Fallback (Fifth priority)
                 if not selected_source:
@@ -219,6 +249,20 @@ class VisualEngine:
                     quality_score = 0.5
                     reasoning = "All visual resolution strategies failed. Falling back to dummy placeholder."
                     used_paths.add(local_path)
+                    try:
+                        from core.telemetry import telemetry_tracker
+                        telemetry_tracker.record_fallback("placeholder_image")
+                        if retry_occurred:
+                            telemetry_tracker.retries["Visual"]["fallback"] = True
+                    except Exception:
+                        pass
+
+                if retry_occurred and selected_source in ("stock", "ai"):
+                    try:
+                        from core.telemetry import telemetry_tracker
+                        telemetry_tracker.retries["Visual"]["recovered"] = True
+                    except Exception:
+                        pass
 
                 decision_time_ms = (time.time() - t_start) * 1000.0
                 total_latency += decision_time_ms

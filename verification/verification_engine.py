@@ -89,6 +89,8 @@ class GeminiVerificationProvider(BaseVerificationProvider):
                 self.validate_schema(data)
 
                 # Parse and return VerifiedResearchPackage
+                if attempt > 1:
+                    telemetry_tracker.retries["Gemini"]["recovered"] = True
                 return self.parse_verified_package(package, data)
 
             except Exception as exc:
@@ -106,6 +108,7 @@ class GeminiVerificationProvider(BaseVerificationProvider):
                 )
                 last_exception = exc
                 self.logger.warning("Verification attempt %d failed: %s", attempt, exc)
+                telemetry_tracker.record_retry("Gemini", str(exc), recovered=False, fallback=False)
                 
                 if attempt < attempts:
                     current_prompt = (

@@ -61,6 +61,11 @@ class GeminiService:
                 self.logger.warning("Gemini quota exhausted during topic generation; using local fallback topic")
             else:
                 self.logger.warning("Gemini topic generation failed; using local fallback topic: %s", exc)
+        try:
+            from core.telemetry import telemetry_tracker
+            telemetry_tracker.record_fallback("offline_topic")
+        except Exception:
+            pass
         return self._fallback_topic(recent_topics)
 
     def generate_script(self, topic: str) -> Script:

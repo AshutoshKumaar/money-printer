@@ -35,6 +35,69 @@ class TelemetryTracker:
     def __init__(self, logger: logging.Logger | None = None) -> None:
         self.logger = logger
         self.records: list[ApiRequestRecord] = []
+        self.stage_timings: dict[str, dict] = {}
+        self.memory_points: dict[str, float] = {}
+        self.peak_memory: float = 0.0
+        self.retries: dict[str, dict] = {
+            "Gemini": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+            "Scene Planner": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+            "Visual": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+            "Upload": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+        }
+        self.fallbacks: dict[str, int] = {
+            "fallback_scene_package": 0,
+            "cached_image": 0,
+            "placeholder_image": 0,
+            "offline_topic": 0,
+            "upload_retry": 0,
+            "offline_script": 0,
+        }
+
+    def record_stage_timing(self, stage: str, start_time: float, end_time: float) -> None:
+        try:
+            from datetime import datetime, timezone
+            elapsed = (end_time - start_time) * 1000.0
+            self.stage_timings[stage] = {
+                "start_time": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat(),
+                "end_time": datetime.fromtimestamp(end_time, tz=timezone.utc).isoformat(),
+                "elapsed_ms": round(elapsed, 2),
+            }
+        except Exception:
+            pass
+
+    def record_memory(self, point_name: str) -> None:
+        try:
+            import psutil
+            mem = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
+            self.memory_points[point_name] = mem
+            if mem > self.peak_memory:
+                self.peak_memory = mem
+        except Exception:
+            pass
+
+    def record_retry(
+        self,
+        module: str,
+        reason: str,
+        recovered: bool = True,
+        fallback: bool = False,
+    ) -> None:
+        try:
+            if module not in self.retries:
+                self.retries[module] = {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False}
+            self.retries[module]["total_retries"] += 1
+            if reason and reason not in self.retries[module]["reasons"]:
+                self.retries[module]["reasons"].append(reason)
+            self.retries[module]["recovered"] = recovered
+            self.retries[module]["fallback"] = fallback
+        except Exception:
+            pass
+
+    def record_fallback(self, fallback_type: str) -> None:
+        try:
+            self.fallbacks[fallback_type] = self.fallbacks.get(fallback_type, 0) + 1
+        except Exception:
+            pass
 
     def record(
         self,
@@ -131,6 +194,31 @@ class TelemetryTracker:
                     p = getattr(scene, "priority", "MEDIUM").upper()
                     scene_priority_distribution[p] = scene_priority_distribution.get(p, 0) + 1
             
+            api_stats = {}
+            providers = {
+                "Gemini": lambda r: r.provider.lower() in ("google", "gemini") and "imagen" not in r.model.lower(),
+                "Pexels": lambda r: r.provider.lower() == "pexels",
+                "Pixabay": lambda r: r.provider.lower() == "pixabay",
+                "Edge TTS": lambda r: r.provider.lower() in ("microsoft", "edge_tts") or "tts" in r.endpoint.lower(),
+                "YouTube": lambda r: r.provider.lower() in ("youtube", "google_youtube"),
+            }
+            for name, filter_fn in providers.items():
+                p_records = [r for r in self.records if filter_fn(r)]
+                reqs = len(p_records)
+                successes = sum(1 for r in p_records if r.status_code in (200, 201))
+                failures = reqs - successes
+                retries_sum = sum(r.retry_count for r in p_records)
+                avg_lat = (sum(r.latency for r in p_records) / reqs) if reqs > 0 else 0.0
+                hit_rate = (sum(1 for r in p_records if r.cache_hit) / reqs * 100.0) if reqs > 0 else 0.0
+                api_stats[name] = {
+                    "requests": reqs,
+                    "success": successes,
+                    "failure": failures,
+                    "retries": retries_sum,
+                    "average_latency_seconds": round(avg_lat, 3),
+                    "cache_hit_rate_pct": round(hit_rate, 2),
+                }
+
             return {
                 "run_id": run_id,
                 "total_requests": total_requests,
@@ -150,6 +238,12 @@ class TelemetryTracker:
                 "cache_images_used": cache_images_used,
                 "ai_percentage": ai_percentage,
                 "scene_priority_distribution": scene_priority_distribution,
+                "timings": self.stage_timings,
+                "memory": self.memory_points,
+                "peak_memory_mb": self.peak_memory,
+                "retries": self.retries,
+                "fallbacks": self.fallbacks,
+                "api_statistics": api_stats,
             }
         except Exception as exc:
             if self.logger:
@@ -201,10 +295,65 @@ class TelemetryTracker:
             }
             with open(debug_dir / "request_timeline.json", "w", encoding="utf-8") as f:
                 json.dump(timeline_payload, f, indent=2, ensure_ascii=False)
+
+            # 4. performance.json
+            perf_payload = {
+                "run_id": run_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "stages": self.stage_timings,
+            }
+            with open(debug_dir / "performance.json", "w", encoding="utf-8") as f:
+                json.dump(perf_payload, f, indent=2, ensure_ascii=False)
+
+            # 5. pipeline_summary.json
+            pipeline_summary_data = {
+                "schema_version": "1.0.0",
+                "pipeline_version": "1.0.0",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                **summary_payload
+            }
+            with open(debug_dir / "pipeline_summary.json", "w", encoding="utf-8") as f:
+                json.dump(pipeline_summary_data, f, indent=2, ensure_ascii=False)
                 
         except Exception as exc:
             if self.logger:
                 self.logger.warning("Telemetry file saving failed: %s", exc)
+
+    def print_final_summary(
+        self,
+        run_id: str,
+        topic: str,
+        category: str,
+        duration: float,
+        video_length: float,
+        upload_success: bool,
+        debug_folder: str,
+        logger: logging.Logger,
+    ) -> None:
+        try:
+            total_api_calls = len(self.records)
+            total_retries = sum(v["total_retries"] for v in self.retries.values())
+            total_fallbacks = sum(self.fallbacks.values())
+            
+            summary_text = (
+                "\nPipeline Summary\n"
+                "----------------\n"
+                f"Run ID: {run_id}\n"
+                f"Topic: {topic}\n"
+                f"Category: {category}\n"
+                f"Duration: {duration:.2f}s\n"
+                f"Total API Calls: {total_api_calls}\n"
+                f"Retries: {total_retries}\n"
+                f"Fallbacks: {total_fallbacks}\n"
+                f"Peak Memory: {self.peak_memory:.2f} MB\n"
+                f"Video Length: {video_length:.2f}s\n"
+                f"Upload Success: {'Yes' if upload_success else 'No'}\n"
+                f"Debug Folder: {debug_folder}"
+            )
+            logger.info(summary_text)
+        except Exception as e:
+            if logger:
+                logger.warning("Failed to print final summary: %s", e)
 
 
 # Global instance

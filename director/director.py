@@ -62,8 +62,33 @@ class Director:
             )
 
         self.logger.info("Director executing modular run flow...")
-        
+        # Reset telemetry records and metrics
+        try:
+            from core.telemetry import telemetry_tracker
+            telemetry_tracker.records = []
+            telemetry_tracker.stage_timings = {}
+            telemetry_tracker.memory_points = {}
+            telemetry_tracker.peak_memory = 0.0
+            telemetry_tracker.retries = {
+                "Gemini": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+                "Scene Planner": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+                "Visual": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+                "Upload": {"total_retries": 0, "reasons": [], "recovered": True, "fallback": False},
+            }
+            telemetry_tracker.fallbacks = {
+                "fallback_scene_package": 0,
+                "cached_image": 0,
+                "placeholder_image": 0,
+                "offline_topic": 0,
+                "upload_retry": 0,
+                "offline_script": 0,
+            }
+            telemetry_tracker.record_memory("pipeline_start")
+        except Exception as e:
+            self.logger.warning("Failed to reset telemetry records: %s", e)
+
         # Topic selection with Topic Intelligence
+        t_topic_start = time.time()
         analytics_engine = AnalyticsEngine(self.settings, self.logger)
         topic_history = TopicHistory(self.settings, self.logger, analytics_engine)
         category_manager = CategoryManager(self.settings, self.logger)
@@ -71,16 +96,17 @@ class Director:
         
         topic_decision = topic_engine.decide_topic(topic)
         topic = topic_decision.topic
+        t_topic_end = time.time()
+        
+        try:
+            telemetry_tracker.record_stage_timing("Topic", t_topic_start, t_topic_end)
+            telemetry_tracker.record_memory("after_topic")
+        except Exception:
+            pass
+
         self.logger.info("Resolved Topic: %s (Category: %s)", topic, topic_decision.category)
         
         paths = self.pipeline.storage.create_run(topic)
-        
-        # Reset telemetry records
-        try:
-            from core.telemetry import telemetry_tracker
-            telemetry_tracker.records = []
-        except Exception as e:
-            self.logger.warning("Failed to reset telemetry records: %s", e)
         
         timings = {}
         partial_outputs = {}
@@ -94,7 +120,13 @@ class Director:
             t_start = time.time()
             research_engine = ResearchEngine(self.settings, self.logger)
             research_context = research_engine.research_topic(topic)
-            t_diff = round(time.time() - t_start, 2)
+            t_end = time.time()
+            try:
+                telemetry_tracker.record_stage_timing("Research", t_start, t_end)
+                telemetry_tracker.record_memory("after_research")
+            except Exception:
+                pass
+            t_diff = round(t_end - t_start, 2)
             timings["research_time"] = t_diff
             partial_outputs["research"] = research_context.to_dict()
             self._save_stage_json("research.json", research_context.to_dict(), paths.run_id)
@@ -104,7 +136,13 @@ class Director:
             t_start = time.time()
             verification_engine = VerificationEngine(self.settings, self.logger)
             verification_report = verification_engine.verify(ResearchPackageAdapter(research_context))
-            t_diff = round(time.time() - t_start, 2)
+            t_end = time.time()
+            try:
+                telemetry_tracker.record_stage_timing("Verification", t_start, t_end)
+                telemetry_tracker.record_memory("after_verification")
+            except Exception:
+                pass
+            t_diff = round(t_end - t_start, 2)
             timings["verification_time"] = t_diff
             partial_outputs["verification"] = verification_report.to_dict()
             self._save_stage_json("verification.json", verification_report.to_dict(), paths.run_id)
@@ -114,7 +152,13 @@ class Director:
             t_start = time.time()
             story_engine = StoryEngine(self.settings, self.logger)
             narrative_script = story_engine.write_story(VerificationAdapter(verification_report))
-            t_diff = round(time.time() - t_start, 2)
+            t_end = time.time()
+            try:
+                telemetry_tracker.record_stage_timing("Story", t_start, t_end)
+                telemetry_tracker.record_memory("after_story")
+            except Exception:
+                pass
+            t_diff = round(t_end - t_start, 2)
             timings["story_time"] = t_diff
             partial_outputs["story"] = narrative_script.to_dict()
             self._save_stage_json("story.json", narrative_script.to_dict(), paths.run_id)
@@ -128,7 +172,13 @@ class Director:
                 research=research_context,
                 verified=verification_report,
             )
-            t_diff = round(time.time() - t_start, 2)
+            t_end = time.time()
+            try:
+                telemetry_tracker.record_stage_timing("Scene", t_start, t_end)
+                telemetry_tracker.record_memory("after_scene")
+            except Exception:
+                pass
+            t_diff = round(t_end - t_start, 2)
             timings["scene_planning_time"] = t_diff
             partial_outputs["scene"] = scene_plan.to_dict()
             self._save_stage_json("scene.json", scene_plan.to_dict(), paths.run_id)
@@ -143,7 +193,13 @@ class Director:
                 visual_engine = VisualEngine(self.settings, self.logger)
                 visual_package = visual_engine.resolve_assets(scene_plan_adapter)
                 visual_assets = VisualPackageAdapter(visual_package)
-                t_diff = round(time.time() - t_start, 2)
+                t_end = time.time()
+                try:
+                    telemetry_tracker.record_stage_timing("Visual", t_start, t_end)
+                    telemetry_tracker.record_memory("after_visual")
+                except Exception:
+                    pass
+                t_diff = round(t_end - t_start, 2)
                 timings["visual_time"] = t_diff
                 
                 # Traceable visual asset records
@@ -228,7 +284,13 @@ class Director:
             t_start_save = time.time()
             feedback_engine = FeedbackEngine(self.settings, self.logger)
             feedback_engine.save_run_performance(result, topic_decision)
-            timings["analytics_save_time"] = round(time.time() - t_start_save, 2)
+            t_end_save = time.time()
+            try:
+                telemetry_tracker.record_stage_timing("Analytics", t_start_save, t_end_save)
+                telemetry_tracker.record_memory("after_analytics")
+            except Exception:
+                pass
+            timings["analytics_save_time"] = round(t_end_save - t_start_save, 2)
 
             # Recalculate total time including analytics save stage
             timings.pop("total_time", None)
@@ -338,6 +400,25 @@ class Director:
                 )
                 print(report)
                 self.logger.info(report)
+                
+                # Print the final summary log as required by Production Hardening Sprint
+                try:
+                    local_result = locals().get("result", None)
+                    upload_success = local_result is not None and getattr(local_result, "youtube_url", None) is not None
+                    video_length = float(getattr(self.pipeline.video, "last_rendered_duration", 0.0) or 0.0)
+                    overall_duration = sum(v for k, v in timings.items() if k != "total_time")
+                    telemetry_tracker.print_final_summary(
+                        run_id=paths.run_id,
+                        topic=topic if 'topic' in locals() else "Unknown Topic",
+                        category=topic_decision.category if 'topic_decision' in locals() else "Unknown Category",
+                        duration=overall_duration,
+                        video_length=video_length,
+                        upload_success=upload_success,
+                        debug_folder=str(debug_dir),
+                        logger=self.logger
+                    )
+                except Exception as e_sum:
+                    self.logger.warning("Failed to print final summary report: %s", e_sum)
             except Exception as e:
                 self.logger.warning("Telemetry save or reporting failed: %s", e)
 

@@ -172,9 +172,16 @@ class ShortsPipeline:
             )
 
         # 1. Voice generation
+        from core.telemetry import telemetry_tracker
         t0 = time.time()
         audio_paths = self.voice.generate_voiceovers(script, paths, use_existing=use_existing_assets)
-        voice_time = round(time.time() - t0, 2)
+        t_end = time.time()
+        try:
+            telemetry_tracker.record_stage_timing("Voice", t0, t_end)
+            telemetry_tracker.record_memory("after_voice")
+        except Exception:
+            pass
+        voice_time = round(t_end - t0, 2)
         self.logger.info("Voice generation completed in %.2fs", voice_time)
 
         # 2. Render final video
@@ -200,7 +207,13 @@ class ShortsPipeline:
                 self.logger.warning("Failed to save render.json: %s", exc)
 
         video_path = self.video.render(script, image_paths, audio_paths, paths, render_package=render_package)
-        render_time = round(time.time() - t0, 2)
+        t_end = time.time()
+        try:
+            telemetry_tracker.record_stage_timing("Render", t0, t_end)
+            telemetry_tracker.record_memory("after_render")
+        except Exception:
+            pass
+        render_time = round(t_end - t0, 2)
         self.logger.info("Render completed in %.2fs", render_time)
 
         # Clean up temporary scene images
@@ -211,7 +224,13 @@ class ShortsPipeline:
         youtube_url = None
         if not generate_only:
             youtube_url = self.youtube.upload(video_path, script, paths.thumbnail_path)
-        upload_time = round(time.time() - t0, 2)
+        t_end = time.time()
+        try:
+            telemetry_tracker.record_stage_timing("Upload", t0, t_end)
+            telemetry_tracker.record_memory("after_upload")
+        except Exception:
+            pass
+        upload_time = round(t_end - t0, 2)
         if not generate_only:
             self.logger.info("Upload completed in %.2fs", upload_time)
 

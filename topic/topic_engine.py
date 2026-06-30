@@ -39,16 +39,21 @@ class TopicEngine:
         else:
             self.client = genai.Client(api_key=api_key)
 
-    def decide_topic(self, manual_topic: str | None = None) -> TopicDecision:
+    def decide_topic(
+        self,
+        manual_topic: str | None = None,
+        topic: str | None = None,
+    ) -> TopicDecision:
         """
         Decides the next topic. If a manual topic is provided by the user, wraps it in a TopicDecision.
         Otherwise, runs the Two-Stage Topic Selection pipeline.
         """
-        if manual_topic:
-            self.logger.info("Manual topic override provided: '%s'", manual_topic)
-            guessed_cat = self.analytics_engine.guess_category(manual_topic, "")
+        resolved_manual_topic = manual_topic or topic
+        if resolved_manual_topic:
+            self.logger.info("Manual topic override provided: '%s'", resolved_manual_topic)
+            guessed_cat = self.analytics_engine.guess_category(resolved_manual_topic, "")
             return TopicDecision(
-                topic=manual_topic,
+                topic=resolved_manual_topic,
                 category=guessed_cat,
                 is_evergreen=True,
                 is_trending=False,

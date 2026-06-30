@@ -116,8 +116,24 @@ class GeminiScenePlannerProvider(BaseScenePlannerProvider):
                 cleaned = self._clean_json_text(raw_text)
                 data = json.loads(cleaned)
 
+                # Normalize parsed response using enum normalization layer
+                from scene.normalizer import SceneNormalizer
+                data = SceneNormalizer.normalize(data, self.logger)
+
                 # Validate JSON schema and value constraints
                 self.validate_schema(data, narrative)
+
+                # Print success planning metrics
+                fixes = data.get("_normalization_fixes", 0)
+                self.logger.info(
+                    "\nScene Planner Metrics\n"
+                    "---------------------\n"
+                    "Gemini Attempt: %d\n"
+                    "Normalization Fixes: %d\n"
+                    "Validation Errors: 0\n"
+                    "Retry Required: No",
+                    attempt, fixes
+                )
 
                 # Parse and return ScenePackage
                 return self.parse_scene_package(data)
@@ -137,6 +153,18 @@ class GeminiScenePlannerProvider(BaseScenePlannerProvider):
                 )
                 last_exception = exc
                 self.logger.warning("Scene planning attempt %d failed: %s", attempt, exc)
+                
+                # Print failure metrics
+                fixes = data.get("_normalization_fixes", 0) if 'data' in locals() else 0
+                self.logger.info(
+                    "\nScene Planner Metrics\n"
+                    "---------------------\n"
+                    "Gemini Attempt: %d\n"
+                    "Normalization Fixes: %d\n"
+                    "Validation Errors: 1\n"
+                    "Retry Required: %s",
+                    attempt, fixes, "Yes" if attempt < attempts else "No"
+                )
                 
                 if attempt < attempts:
                     current_prompt = (
